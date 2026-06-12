@@ -28,15 +28,19 @@ class DataFetcher:
             logger.info(f"Using anonymous/public access for exchange '{exchange_id}' as API keys are placeholder or missing.")
             
         self.exchange = exchange_class(config)
-        if demo_trading:
-            self.exchange.enableDemoTrading(True)
-            logger.info(f"Enabled Demo Trading mode for exchange '{exchange_id}'.")
-        elif paper:
-            if not is_placeholder(api_key):
-                logger.info(f"Live API key detected. Fetching public market data from live '{exchange_id}' exchange.")
+        
+        if paper:
+            # For paper trading, order execution is simulated locally, so we always fetch live mainnet data (highly reliable/unblocked)
+            logger.info(f"Paper trading mode active. Fetching public market data from live mainnet '{exchange_id}' exchange.")
+        else:
+            # Only enable testnet/demo endpoints if live-trading on those specific sandboxes
+            if demo_trading:
+                self.exchange.enableDemoTrading(True)
+                logger.info(f"Enabled Demo Trading mode for exchange '{exchange_id}'.")
             else:
-                self.exchange.set_sandbox_mode(True)
-                logger.info(f"Enabled Testnet/Sandbox mode for exchange '{exchange_id}'.")
+                if is_placeholder(api_key):
+                    self.exchange.set_sandbox_mode(True)
+                    logger.info(f"Enabled Testnet/Sandbox mode for exchange '{exchange_id}'.")
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 100, retries: int = 3) -> pd.DataFrame:
         """Fetch OHLCV historical data with pagination support for large limits."""

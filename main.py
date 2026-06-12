@@ -218,23 +218,12 @@ class TradingBotEngine:
                 for symbol, spread in self.stocks_execution.active_spreads.items():
                     contracts = self.stocks_risk.open_spreads.get(symbol, {}).get('contracts', 1)
                     strat = spread.get('strategy_type', 'BULL_PUT')
-                    
-                    if strat == 'BULL_PUT':
-                        report += (
-                            f"- {symbol} ({contracts} contracts - BULL PUT):\n"
-                            f"  Sell ₹{spread['short_strike']:.2f} Put / Buy ₹{spread['long_strike']:.2f} Put\n"
-                        )
-                    elif strat == 'BEAR_CALL':
-                        report += (
-                            f"- {symbol} ({contracts} contracts - BEAR CALL):\n"
-                            f"  Sell ₹{spread['short_strike']:.2f} Call / Buy ₹{spread['long_strike']:.2f} Call\n"
-                        )
-                    else:  # IRON_CONDOR
-                        report += (
-                            f"- {symbol} ({contracts} contracts - IRON CONDOR):\n"
-                            f"  Put: Sell ₹{spread['short_put_strike']:.2f} / Buy ₹{spread['long_put_strike']:.2f}\n"
-                            f"  Call: Sell ₹{spread['short_call_strike']:.2f} / Buy ₹{spread['long_call_strike']:.2f}\n"
-                        )
+                    from stocks.options_strategy import format_strategy_legs
+                    legs_str = format_strategy_legs(spread, indent="  ")
+                    report += (
+                        f"- {symbol} ({contracts} contracts - {strat}):\n"
+                        f"{legs_str}\n"
+                    )
                     report += f"  DTE: {spread['current_dte']} days | Mid Net Credit: ₹{spread['net_credit']:.2f}\n"
                 reports.append(report)
                 
@@ -597,20 +586,23 @@ class TradingBotEngine:
                                         )
                                     except Exception as e:
                                         logging.error(f"Failed to generate brain options explanation: {e}")
-                                        msg = f"🚀 Entered options spread on {symbol}: Net Credit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
+                                        from stocks.options_strategy import format_strategy_legs
+                                        legs_str = format_strategy_legs(spread_info, indent="   ")
+                                        msg = (
+                                            f"🚀 Entered options spread on {symbol} ({spread_info.get('strategy_type', 'BULL_PUT')}):\n"
+                                            f"{legs_str}\n"
+                                            f"   Net Credit/Debit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
+                                        )
                                 else:
                                     strat = spread_info.get('strategy_type', 'BULL_PUT')
-                                    if strat == 'BULL_PUT':
-                                        msg = f"🚀 Entered options spread on {symbol} (BULL PUT): Sell ₹{spread_info['short_strike']:.2f} Put / Buy ₹{spread_info['long_strike']:.2f} Put | Net Credit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
-                                    elif strat == 'BEAR_CALL':
-                                        msg = f"🚀 Entered options spread on {symbol} (BEAR CALL): Sell ₹{spread_info['short_strike']:.2f} Call / Buy ₹{spread_info['long_strike']:.2f} Call | Net Credit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
-                                    else: # IRON_CONDOR
-                                        msg = (
-                                            f"🦅 Entered options spread on {symbol} (IRON CONDOR):\n"
-                                            f"   Put: Sell ₹{spread_info['short_put_strike']:.2f} / Buy ₹{spread_info['long_put_strike']:.2f}\n"
-                                            f"   Call: Sell ₹{spread_info['short_call_strike']:.2f} / Buy ₹{spread_info['long_call_strike']:.2f}\n"
-                                            f"   Total Credit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
-                                        )
+                                    from stocks.options_strategy import format_strategy_legs
+                                    legs_str = format_strategy_legs(spread_info, indent="   ")
+                                    emoji = "🦅" if strat in ("IRON_CONDOR", "IRON_BUTTERFLY") else "🚀"
+                                    msg = (
+                                        f"{emoji} Entered options spread on {symbol} ({strat}):\n"
+                                        f"{legs_str}\n"
+                                        f"   Net Credit/Debit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
+                                    )
                                 self.notifier.send_message(msg)
 
 def run_trade(config):

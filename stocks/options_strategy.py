@@ -472,3 +472,29 @@ class BullPutSpreadStrategy:
 
         return {}
 
+def format_strategy_legs(spread_info: dict, indent: str = "") -> str:
+    strat = spread_info.get('strategy_type', 'BULL_PUT')
+    
+    if strat in ('MOMENTUM_CALL_BUY', 'ORB_CALL_BUY'):
+        return f"{indent}Buy Long Call: ₹{spread_info.get('long_strike', 0.0):.2f}"
+    elif strat in ('MOMENTUM_PUT_BUY', 'ORB_PUT_BUY'):
+        return f"{indent}Buy Long Put: ₹{spread_info.get('long_strike', 0.0):.2f}"
+    elif strat == 'CASH_SECURED_PUT':
+        return f"{indent}Sell Short Put: ₹{spread_info.get('short_strike', 0.0):.2f}"
+    elif strat == 'COVERED_CALL':
+        return f"{indent}Buy Underlying Stock + Sell Short Call: ₹{spread_info.get('short_strike', 0.0):.2f}"
+    elif strat == 'CALENDAR_SPREAD':
+        return f"{indent}Calendar Spread (ATM Call): ₹{spread_info.get('short_strike', 0.0):.2f}"
+    elif strat == 'BULL_PUT':
+        return f"{indent}Sell ₹{spread_info.get('short_strike', 0.0):.2f} Put / Buy ₹{spread_info.get('long_strike', 0.0):.2f} Put"
+    elif strat == 'BEAR_CALL':
+        return f"{indent}Sell ₹{spread_info.get('short_strike', 0.0):.2f} Call / Buy ₹{spread_info.get('long_strike', 0.0):.2f} Call"
+    elif strat in ('IRON_CONDOR', 'IRON_BUTTERFLY'):
+        return (
+            f"{indent}Put: Sell ₹{spread_info.get('short_put_strike', 0.0):.2f} / Buy ₹{spread_info.get('long_put_strike', 0.0):.2f}\n"
+            f"{indent}Call: Sell ₹{spread_info.get('short_call_strike', 0.0):.2f} / Buy ₹{spread_info.get('long_call_strike', 0.0):.2f}"
+        )
+    else:
+        return f"{indent}Strikes: Short {spread_info.get('short_strike', 0.0):.2f} / Long {spread_info.get('long_strike', 0.0):.2f}"
+
+

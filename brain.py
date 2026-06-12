@@ -349,12 +349,9 @@ class TradingBrain:
         """
         if not self._is_api_key_valid():
             strat = spread_info.get('strategy_type', 'BULL_PUT')
-            if strat == 'BULL_PUT':
-                return f"Entered options spread on {symbol} (BULL PUT): Sell ₹{spread_info['short_strike']:.2f} Put / Buy ₹{spread_info['long_strike']:.2f} Put | Net Credit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
-            elif strat == 'BEAR_CALL':
-                return f"Entered options spread on {symbol} (BEAR CALL): Sell ₹{spread_info['short_strike']:.2f} Call / Buy ₹{spread_info['long_strike']:.2f} Call | Net Credit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
-            else:
-                return f"Entered options spread on {symbol} (IRON CONDOR): Put ₹{spread_info['short_put_strike']:.2f}/₹{spread_info['long_put_strike']:.2f} | Call ₹{spread_info['short_call_strike']:.2f}/₹{spread_info['long_call_strike']:.2f} | Contracts: {contracts}"
+            from stocks.options_strategy import format_strategy_legs
+            legs_str = format_strategy_legs(spread_info)
+            return f"Entered options spread on {symbol} ({strat}): {legs_str} | Net Credit/Debit: ₹{spread_info.get('net_credit', 0.0):.2f} | Contracts: {contracts}"
 
         strat = spread_info.get('strategy_type', 'BULL_PUT')
         prompt = (
@@ -366,7 +363,7 @@ class TradingBrain:
             f"- Contracts: {contracts}\n"
             f"- Underlying Price: {spread_info.get('underlying_price'):.2f}\n"
             f"- Technical Rationale: {rationale}\n\n"
-            f"Make it read like a quick desk update. Keep it concise."
+            f"Make it read like a quick update from a quant desk. Keep it concise."
         )
         
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
@@ -386,9 +383,7 @@ class TradingBrain:
             
         # Fallback to simple description if LLM failed
         strat = spread_info.get('strategy_type', 'BULL_PUT')
-        if strat == 'BULL_PUT':
-            return f"Entered options spread on {symbol} (BULL PUT): Sell ₹{spread_info['short_strike']:.2f} Put / Buy ₹{spread_info['long_strike']:.2f} Put | Net Credit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
-        elif strat == 'BEAR_CALL':
-            return f"Entered options spread on {symbol} (BEAR CALL): Sell ₹{spread_info['short_strike']:.2f} Call / Buy ₹{spread_info['long_strike']:.2f} Call | Net Credit: ₹{spread_info['net_credit']:.2f} | Contracts: {contracts}"
-        else:
-            return f"Entered options spread on {symbol} (IRON CONDOR): Put ₹{spread_info['short_put_strike']:.2f}/₹{spread_info['long_put_strike']:.2f} | Call ₹{spread_info['short_call_strike']:.2f}/₹{spread_info['long_call_strike']:.2f} | Contracts: {contracts}"
+        from stocks.options_strategy import format_strategy_legs
+        legs_str = format_strategy_legs(spread_info)
+        return f"Entered options spread on {symbol} ({strat}): {legs_str} | Net Credit/Debit: ₹{spread_info.get('net_credit', 0.0):.2f} | Contracts: {contracts}"
+

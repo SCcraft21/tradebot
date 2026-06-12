@@ -53,8 +53,26 @@ def setup_logging(config):
     root_logger.addHandler(fh)
 
 def load_config(path='config.yaml'):
+    import os
     with open(path, 'r') as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+        
+    if 'credentials' not in config:
+        config['credentials'] = {}
+        
+    # Environment variable overrides for secure cloud/Docker hosting
+    if 'TELEGRAM_TOKEN' in os.environ:
+        config['credentials']['telegram_token'] = os.environ['TELEGRAM_TOKEN']
+    if 'TELEGRAM_CHAT_ID' in os.environ:
+        config['credentials']['telegram_chat_id'] = os.environ['TELEGRAM_CHAT_ID']
+    if 'BYBIT_API_KEY' in os.environ:
+        config['credentials']['api_key'] = os.environ['BYBIT_API_KEY']
+    if 'BYBIT_API_SECRET' in os.environ:
+        config['credentials']['api_secret'] = os.environ['BYBIT_API_SECRET']
+    if 'GEMINI_API_KEY' in os.environ:
+        config['credentials']['gemini_api_key'] = os.environ['GEMINI_API_KEY']
+        
+    return config
 
 class TradingBotEngine:
     def __init__(self, config, asset_mode='crypto'):

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 class SwingStrategy:
     def __init__(self, rsi_period: int, rsi_oversold: float, ema_period: int, ema_proximity_pct: float,
-                 ema_long_period: int = 200, atr_period: int = 14,
+                 ema_long_period: int = 200, atr_period: int = 14, vwap_period: int = 14,
                  require_volume_spike: bool = True, require_macd: bool = True, require_ema200: bool = True):
         self.rsi_period = rsi_period
         self.rsi_oversold = rsi_oversold
@@ -16,13 +16,14 @@ class SwingStrategy:
         self.ema_proximity_pct = ema_proximity_pct
         self.ema_long_period = ema_long_period
         self.atr_period = atr_period
+        self.vwap_period = vwap_period
         self.require_volume_spike = require_volume_spike
         self.require_macd = require_macd
         self.require_ema200 = require_ema200
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply confluence logic: RSI < 35, near EMA(50) support, volume spike, above EMA(200) trend, MACD crossover."""
-        min_required = max(self.ema_long_period, self.ema_period, 26 + 9)
+        min_required = max(self.ema_long_period, self.ema_period, 26 + 9, self.vwap_period)
         if df.empty or len(df) < min_required:
             return df
         
@@ -30,6 +31,13 @@ class SwingStrategy:
         df['rsi'] = RSIIndicator(close=df['close'], window=self.rsi_period).rsi()
         df['ema50'] = EMAIndicator(close=df['close'], window=self.ema_period).ema_indicator()
         df['ema200'] = EMAIndicator(close=df['close'], window=self.ema_long_period).ema_indicator()
+        
+        # Calculate VWAP
+        tp = (df['high'] + df['low'] + df['close']) / 3.0
+        tp_vol = tp * df['volume']
+        cum_tp_vol = tp_vol.rolling(window=self.vwap_period).sum()
+        cum_vol = df['volume'].rolling(window=self.vwap_period).sum()
+        df['vwap'] = (cum_tp_vol / cum_vol).fillna(df['close'])
         
         # MACD
         macd_indicator = MACD(close=df['close'], window_slow=26, window_fast=12, window_sign=9)

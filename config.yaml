@@ -1,7 +1,6 @@
 trading:
   symbols:
-    - BTC/USDT
-    - ETH/USDT
+    - all
   timeframe: 15m
   mode: paper # 'paper' or 'live'
   exchange: bybit
@@ -11,8 +10,9 @@ trading:
 strategy:
   rsi_period: 14
   rsi_oversold: 45
+  vwap_period: 14
   ema_period: 50
-  ema_proximity_pct: 0.015 # 1.5% distance mapping as "near support"
+  ema_proximity_pct: 0.015
   require_volume_spike: false
   require_macd: false
   require_ema200: true
@@ -25,6 +25,9 @@ risk:
   max_open_trades: 2
   tp_atr_mult: 3.0
   sl_atr_mult: 1.5
+  adaptive_sizing: true
+  base_lots: 5
+  sized_down_lots: 1
 
 brain:
   enabled: true
@@ -34,7 +37,7 @@ brain:
 credentials:
   api_key: "jNC14wXCsRTRrVGpXN"
   api_secret: "2mnBZ42OzIHFrNOID3qQoRtEIYrbkztnxLf6"
-  gemini_api_key: "YOUR_GEMINI_API_KEY"
+  gemini_api_key: "AQ.Ab8RN6KbiYdWB6JBjvX4r1rGNxYYqWSrFtHRHRWY2N3Nxsyg1Qy6u4¬q1"
   telegram_token: "8779263598:AAGIl9T9xfXktUZXBmgGlbKJoQIDe8kPQEY"
   telegram_chat_id: "7911575340"
   discord_webhook: ""
@@ -49,11 +52,7 @@ logging:
 
 stocks:
   symbols:
-    - ^NSEI
-    - RELIANCE.NS
-    - TCS.NS
-    - INFY.NS
-    - HDFCBANK.NS
+    - all
   target_dte: 30
   target_delta: -0.25
   spread_width: 50.0
@@ -67,6 +66,9 @@ stocks:
   daily_loss_limit_pct: 0.05
   initial_capital: 500000.0
   lot_size: 50
+  adaptive_sizing: true
+  base_lots: 5
+  sized_down_lots: 1
 
 
 

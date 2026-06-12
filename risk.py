@@ -7,7 +7,8 @@ logger = logging.getLogger(__name__)
 class RiskManager:
     def __init__(self, take_profit_pct: float, stop_loss_pct: float, max_capital_per_trade_pct: float, 
                  daily_loss_limit_pct: float, max_open_trades: int,
-                 tp_atr_mult: float = 3.0, sl_atr_mult: float = 1.5):
+                 tp_atr_mult: float = 3.0, sl_atr_mult: float = 1.5,
+                 adaptive_sizing: bool = False, base_lots: int = 5, sized_down_lots: int = 1):
         self.take_profit_pct = take_profit_pct
         self.stop_loss_pct = stop_loss_pct
         self.max_capital_per_trade_pct = max_capital_per_trade_pct
@@ -15,6 +16,9 @@ class RiskManager:
         self.max_open_trades = max_open_trades
         self.tp_atr_mult = tp_atr_mult
         self.sl_atr_mult = sl_atr_mult
+        self.adaptive_sizing = adaptive_sizing
+        self.base_lots = base_lots
+        self.sized_down_lots = sized_down_lots
         
         from db import load_all_crypto_trades
         self.open_trades: Dict[str, Dict] = load_all_crypto_trades() # Tracks active trades state locally
@@ -35,7 +39,26 @@ class RiskManager:
         return True
 
     def calculate_position_size(self, total_balance: float, current_price: float) -> float:
-        capital_to_risk = total_balance * self.max_capital_per_trade_pct
+        if self.adaptive_sizing:
+            from db import load_closed_trades_history
+            history = load_closed_trades_history(limit=1)
+            target_lots = self.base_lots
+            if history:
+                last_trade = history[0]
+                # Check if the last trade was a crypto trade and closed at a loss
+                if last_trade.get('asset_type') == 'crypto' and last_trade.get('pnl', 0.0) < 0:
+                    target_lots = self.sized_down_lots
+                    logger.info(f"Crypto: Last trade was a LOSS (PnL: {last_trade['pnl']:.2f}). Sizing down to {target_lots} lots.")
+                else:
+                    logger.info(f"Crypto: Last trade was a WIN/TIE. Using base {target_lots} lots.")
+            else:
+                logger.info(f"Crypto: No trade history. Using base {target_lots} lots.")
+                
+            lot_fraction = self.max_capital_per_trade_pct / self.base_lots
+            capital_to_risk = total_balance * (target_lots * lot_fraction)
+        else:
+            capital_to_risk = total_balance * self.max_capital_per_trade_pct
+            
         return capital_to_risk / current_price
 
     def calculate_tp_sl(self, entry_price: float, atr: float = None) -> Tuple[float, float]:

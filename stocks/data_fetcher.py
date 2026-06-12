@@ -283,3 +283,25 @@ class StockDataFetcher:
         except Exception as e:
             logger.error(f"Failed to generate synthetic option chain for {symbol}: {e}")
             return None, pd.DataFrame(), pd.DataFrame(), S
+
+    def fetch_all_nse_fo_symbols(self) -> list:
+        """Fetch all dynamic stock symbols listed in the NSE F&O segment."""
+        from stocks.options_risk import fetch_fo_lot_sizes
+        try:
+            dynamic_lots = fetch_fo_lot_sizes()
+            symbols = []
+            for sym in dynamic_lots.keys():
+                s = sym.strip().upper()
+                if not s or s in ('NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY'):
+                    continue
+                if not s.endswith('.NS'):
+                    symbols.append(f"{s}.NS")
+                else:
+                    symbols.append(s)
+            if symbols:
+                logger.info(f"Loaded {len(symbols)} NSE F&O stock symbols dynamically.")
+                return sorted(symbols)
+        except Exception as e:
+            logger.error(f"Failed to fetch dynamic F&O symbols: {e}")
+            
+        return ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS"]

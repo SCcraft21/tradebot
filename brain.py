@@ -81,6 +81,7 @@ class TradingBrain:
                 f"Time: {idx} | "
                 f"O: {row['open']:.2f}, H: {row['high']:.2f}, L: {row['low']:.2f}, C: {row['close']:.2f}, V: {int(row['volume'])} | "
                 f"RSI: {row.get('rsi', 0.0):.1f} | "
+                f"VWAP: {row.get('vwap', 0.0):.2f} | "
                 f"EMA50: {row.get('ema50', 0.0):.2f} | "
                 f"EMA200: {row.get('ema200', 0.0):.2f} | "
                 f"MACD: {row.get('macd', 0.0):.2f}/{row.get('macd_signal', 0.0):.2f}"
@@ -95,7 +96,7 @@ class TradingBrain:
             f"A technical swing-trading strategy has just triggered a BUY signal on the most recent completed candle.\n\n"
             f"Here is the historical context of the last 15 candles:\n"
             f"{data_text}\n\n"
-            f"Please review the technical indicators and raw price action context to determine if this BUY signal is high quality or a trap (e.g. consolidation breakout vs. local top exhaustion, volume confirmation vs. churn, rsi oversold recovery vs. extreme panic sell off).\n\n"
+            f"Please review the technical indicators (specifically RSI for momentum strength and VWAP showing market value strength) and raw price action context to determine if this BUY signal is high quality or a trap (e.g. consolidation breakout vs. local top exhaustion, volume confirmation vs. churn, rsi oversold recovery vs. extreme panic sell off).\n\n"
             f"Return your decision strictly in JSON format matching the schema below. Do NOT write any code blocks, backticks, or extra markdown text. Output a single, clean JSON object:\n"
             f"{{\n"
             f"  \"decision\": \"APPROVE\" or \"VETO\",\n"
@@ -208,6 +209,19 @@ class TradingBrain:
             logger.warning(f"DataFrame is empty or too small for analysis for symbol {symbol}.")
             return fallback
 
+        # Ensure indicators exist on options df
+        if 'rsi' not in df.columns:
+            from ta.momentum import RSIIndicator
+            from ta.trend import EMAIndicator
+            df = df.copy()
+            df['rsi'] = RSIIndicator(close=df['Close'], window=14).rsi()
+            df['ema200'] = EMAIndicator(close=df['Close'], window=200).ema_indicator()
+            tp = (df['High'] + df['Low'] + df['Close']) / 3.0
+            tp_vol = tp * df['Volume']
+            cum_tp_vol = tp_vol.rolling(window=14).sum()
+            cum_vol = df['Volume'].rolling(window=14).sum()
+            df['vwap'] = (cum_tp_vol / cum_vol).fillna(df['Close'])
+            
         # Prepare recent daily candles to present to the brain (last 15 rows)
         recent_df = df.tail(15).copy()
         
@@ -216,7 +230,8 @@ class TradingBrain:
             date_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)
             candle_str = (
                 f"Date: {date_str} | "
-                f"O: {row['Open']:.2f}, H: {row['High']:.2f}, L: {row['Low']:.2f}, C: {row['Close']:.2f}, V: {int(row['Volume'])}"
+                f"O: {row['Open']:.2f}, H: {row['High']:.2f}, L: {row['Low']:.2f}, C: {row['Close']:.2f}, V: {int(row['Volume'])} | "
+                f"RSI: {row.get('rsi', 0.0):.1f} | VWAP: {row.get('vwap', 0.0):.2f} | EMA200: {row.get('ema200', 0.0):.2f}"
             )
             data_summary.append(candle_str)
             
@@ -225,21 +240,35 @@ class TradingBrain:
         # Format spread details based on strategy type
         strat_type = spread_info.get("strategy_type", "BULL_PUT")
         
-        if strat_type == "BULL_PUT":
-            spread_details = (
-                f"Strategy: BULL PUT SPREAD (Bullish / Net Credit Spread)\n"
-                f"- Sell short put strike: {spread_info.get('short_strike'):.2f} (Delta: {spread_info.get('short_delta'):.2f})\n"
-                f"- Buy long put strike: {spread_info.get('long_strike'):.2f} (Delta: {spread_info.get('long_delta'):.2f})\n"
+        spread_details = f"Strategy: {strat_type}\n"
+        if strat_type in ('MOMENTUM_CALL_BUY', 'ORB_CALL_BUY'):
+            spread_details += f"- Buy Long Call Strike: {spread_info.get('long_strike'):.2f}\n"
+        elif strat_type in ('MOMENTUM_PUT_BUY', 'ORB_PUT_BUY'):
+            spread_details += f"- Buy Long Put Strike: {spread_info.get('long_strike'):.2f}\n"
+        elif strat_type == 'CASH_SECURED_PUT':
+            spread_details += f"- Sell Short Put Strike: {spread_info.get('short_strike'):.2f}\n"
+        elif strat_type == 'COVERED_CALL':
+            spread_details += f"- Buy Underlying Stock + Sell Short Call Strike: {spread_info.get('short_strike'):.2f}\n"
+        elif strat_type == 'CALENDAR_SPREAD':
+            spread_details += f"- Sell near-term strike & Buy longer-term strike: {spread_info.get('short_strike'):.2f}\n"
+        elif strat_type == 'IRON_BUTTERFLY':
+            spread_details += (
+                f"- Sell Put/Call Strike: {spread_info.get('short_put_strike'):.2f}\n"
+                f"- Buy Put Strike: {spread_info.get('long_put_strike'):.2f}\n"
+                f"- Buy Call Strike: {spread_info.get('long_call_strike'):.2f}\n"
             )
-        elif strat_type == "BEAR_CALL":
-            spread_details = (
-                f"Strategy: BEAR CALL SPREAD (Bearish / Net Credit Spread)\n"
-                f"- Sell short call strike: {spread_info.get('short_strike'):.2f} (Delta: {spread_info.get('short_delta'):.2f})\n"
-                f"- Buy long call strike: {spread_info.get('long_strike'):.2f} (Delta: {spread_info.get('long_delta'):.2f})\n"
+        elif strat_type == 'BULL_PUT':
+            spread_details += (
+                f"- Sell Short Put Strike: {spread_info.get('short_strike'):.2f}\n"
+                f"- Buy Long Put Strike: {spread_info.get('long_strike'):.2f}\n"
+            )
+        elif strat_type == 'BEAR_CALL':
+            spread_details += (
+                f"- Sell Short Call Strike: {spread_info.get('short_strike'):.2f}\n"
+                f"- Buy Long Call Strike: {spread_info.get('long_strike'):.2f}\n"
             )
         else: # IRON_CONDOR
-            spread_details = (
-                f"Strategy: IRON CONDOR (Neutral / Range-Bound Spread)\n"
+            spread_details += (
                 f"- Put Wing: Sell {spread_info.get('short_put_strike'):.2f} / Buy {spread_info.get('long_put_strike'):.2f}\n"
                 f"- Call Wing: Sell {spread_info.get('short_call_strike'):.2f} / Buy {spread_info.get('long_call_strike'):.2f}\n"
             )
@@ -257,12 +286,18 @@ class TradingBrain:
         # Build prompt
         prompt = (
             f"You are a cognitive expert options strategist ('TradingBrain') for the symbol {symbol}.\n"
-            f"A multi-regime options trading strategy has triggered a spread entry candidate based on the current regime.\n\n"
-            f"Here are the options spread details:\n"
+            f"A multi-regime options trading strategy has triggered a trade entry candidate based on the current regime.\n\n"
+            f"Here are the options trade details:\n"
             f"{spread_summary}\n\n"
             f"Here is the daily historical stock price action context of the last 15 days:\n"
             f"{data_text}\n\n"
-            f"Please review the stock price trend, consolidation levels, potential support/resistance, days to expiration, and return on risk to determine if this options spread trade is high quality or a high-risk trap (e.g. trading under strong resistance for bull put, near support for bear call, or index is trending fast out of range for Iron Condor).\n\n"
+            f"Please review the stock price trend, consolidation levels, potential support/resistance, indicators (RSI, VWAP, EMA), and return on risk to determine if this options trade is high quality or a high-risk trap.\n"
+            f"Guidelines for options strategies:\n"
+            f"- Momentum Breakout Buy (MOMENTUM_CALL_BUY / MOMENTUM_PUT_BUY): Look for clear trend breakouts, high volume, and RSI showing strong momentum (RSI > 60 for call, < 40 for put) with price diverging from VWAP.\n"
+            f"- Opening Range Breakout (ORB_CALL_BUY / ORB_PUT_BUY): Look for sudden volume expansions at market open breaking past key daily ranges.\n"
+            f"- Iron Condor / Iron Butterfly: Look for low-momentum, range-bound consolidation, flat moving averages, and high implied volatility (IV Rank > 30-50%). Veto if index/stock is trending hard.\n"
+            f"- Covered Call / Cash-Secured Put: Look for strong/moderate bullish trends, stable/low volatility, or consolidation near key support levels.\n"
+            f"- Calendar Spread: Look for range-bound or slightly bullish outlook in low implied volatility regimes (IV Rank < 15-20%) expecting a future vol expansion.\n\n"
             f"Return your decision strictly in JSON format matching the schema below. Do NOT write any code blocks, backticks, or extra markdown text. Output a single, clean JSON object:\n"
             f"{{\n"
             f"  \"decision\": \"APPROVE\" or \"VETO\",\n"

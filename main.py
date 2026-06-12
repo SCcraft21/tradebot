@@ -99,6 +99,7 @@ class TradingBotEngine:
             strat_cfg.get('rsi_oversold', 35.0), 
             strat_cfg.get('ema_period', 50), 
             strat_cfg.get('ema_proximity_pct', 0.015),
+            vwap_period=strat_cfg.get('vwap_period', 14),
             require_volume_spike=strat_cfg.get('require_volume_spike', True),
             require_macd=strat_cfg.get('require_macd', True),
             require_ema200=strat_cfg.get('require_ema200', True)
@@ -112,7 +113,10 @@ class TradingBotEngine:
             risk_cfg.get('daily_loss_limit_pct', 0.10), 
             max_open_trades=risk_cfg.get('max_open_trades', 2),
             tp_atr_mult=risk_cfg.get('tp_atr_mult', 3.0),
-            sl_atr_mult=risk_cfg.get('sl_atr_mult', 1.5)
+            sl_atr_mult=risk_cfg.get('sl_atr_mult', 1.5),
+            adaptive_sizing=risk_cfg.get('adaptive_sizing', False),
+            base_lots=risk_cfg.get('base_lots', 5),
+            sized_down_lots=risk_cfg.get('sized_down_lots', 1)
         )
         
         # Cognitive Brain Integration
@@ -142,7 +146,10 @@ class TradingBotEngine:
             max_capital_per_spread_pct=stocks_cfg.get('max_capital_per_spread_pct', 0.15),
             max_active_spreads=stocks_cfg.get('max_active_spreads', 3),
             daily_loss_limit_pct=stocks_cfg.get('daily_loss_limit_pct', 0.05),
-            lot_size=stocks_cfg.get('lot_size', 100.0)
+            lot_size=stocks_cfg.get('lot_size', 100.0),
+            adaptive_sizing=stocks_cfg.get('adaptive_sizing', False),
+            base_lots=stocks_cfg.get('base_lots', 5),
+            sized_down_lots=stocks_cfg.get('sized_down_lots', 1)
         )
         
         # Notifier & Telegram Controller
@@ -449,7 +456,18 @@ class TradingBotEngine:
     def _check_entries(self):
         # 1. Check Crypto Entries
         if self.asset_mode in ("crypto", "both"):
-            symbols = self.config['trading']['symbols']
+            symbols = self.config['trading'].get('symbols', [])
+            if not symbols or (len(symbols) == 1 and symbols[0].lower() == 'all'):
+                try:
+                    self.crypto_fetcher.exchange.load_markets()
+                    symbols = [
+                        sym for sym, market in self.crypto_fetcher.exchange.markets.items()
+                        if market.get('active') and sym.endswith('/USDT')
+                    ]
+                except Exception as e:
+                    logging.error(f"Error loading all ccxt cryptos: {e}. Falling back to default list.")
+                    symbols = ['BTC/USDT', 'ETH/USDT']
+                    
             timeframe = self.config['trading']['timeframe']
             for symbol in symbols:
                 if symbol in self.crypto_risk.open_trades:
@@ -527,7 +545,15 @@ class TradingBotEngine:
 
         # 2. Check Stocks Entries
         if self.asset_mode in ("stocks", "both"):
-            symbols = [s for s in self.config['stocks']['symbols'] if s not in self.stocks_execution.active_spreads]
+            cfg_symbols = self.config['stocks'].get('symbols', [])
+            if not cfg_symbols or (len(cfg_symbols) == 1 and cfg_symbols[0].lower() == 'all'):
+                try:
+                    cfg_symbols = self.stocks_fetcher.fetch_all_nse_fo_symbols()
+                except Exception as e:
+                    logging.error(f"Error fetching dynamic NSE symbols: {e}")
+                    cfg_symbols = ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS']
+                    
+            symbols = [s for s in cfg_symbols if s not in self.stocks_execution.active_spreads]
             for symbol in symbols:
                 if not self.stocks_risk.can_open_spread():
                     break
@@ -602,6 +628,7 @@ def run_backtest(config):
         strat_cfg.get('rsi_oversold', 35.0), 
         strat_cfg.get('ema_period', 50), 
         strat_cfg.get('ema_proximity_pct', 0.015),
+        vwap_period=strat_cfg.get('vwap_period', 14),
         require_volume_spike=strat_cfg.get('require_volume_spike', True),
         require_macd=strat_cfg.get('require_macd', True),
         require_ema200=strat_cfg.get('require_ema200', True)
@@ -613,12 +640,18 @@ def run_backtest(config):
         risk_cfg.get('daily_loss_limit_pct', 0.10), 
         risk_cfg.get('max_open_trades', 2),
         tp_atr_mult=risk_cfg.get('tp_atr_mult', 3.0),
-        sl_atr_mult=risk_cfg.get('sl_atr_mult', 1.5)
+        sl_atr_mult=risk_cfg.get('sl_atr_mult', 1.5),
+        adaptive_sizing=risk_cfg.get('adaptive_sizing', False),
+        base_lots=risk_cfg.get('base_lots', 5),
+        sized_down_lots=risk_cfg.get('sized_down_lots', 1)
     )
     
     hist_data = {}
     backtest_limit = trade_cfg.get('backtest_limit', 5000)
-    for symbol in trade_cfg.get('symbols', ['BTC/USDT', 'ETH/USDT']):
+    cfg_symbols = trade_cfg.get('symbols', ['BTC/USDT', 'ETH/USDT'])
+    if not cfg_symbols or (len(cfg_symbols) == 1 and cfg_symbols[0].lower() == 'all'):
+        cfg_symbols = ['BTC/USDT', 'ETH/USDT']
+    for symbol in cfg_symbols:
         logging.info(f"Downloading historicals for {symbol}...")
         hist_data[symbol] = fetcher.fetch_ohlcv(symbol, trade_cfg.get('timeframe', '15m'), limit=backtest_limit)
         
@@ -666,7 +699,10 @@ def run_stocks_backtest(config):
     )
     
     hist_data = {}
-    for symbol in stocks_cfg.get('symbols', ['SPY', 'QQQ', 'AAPL', 'MSFT']):
+    cfg_symbols = stocks_cfg.get('symbols', ['SPY', 'QQQ', 'AAPL', 'MSFT'])
+    if not cfg_symbols or (len(cfg_symbols) == 1 and cfg_symbols[0].lower() == 'all'):
+        cfg_symbols = ['RELIANCE.NS', 'TCS.NS', 'INFY.NS']
+    for symbol in cfg_symbols:
         logging.info(f"Downloading historical daily data for {symbol}...")
         hist_data[symbol] = fetcher.fetch_stock_history(symbol, period="2y")
         

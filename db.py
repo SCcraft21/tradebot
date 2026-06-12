@@ -10,20 +10,71 @@ logger = logging.getLogger(__name__)
 # If DATABASE_URL is set in environment (standard on cloud hosts), use Postgres. Otherwise fallback to SQLite.
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
+def parse_db_url(db_url):
+    db_name = None
+    db_user = None
+    db_password = None
+    db_host = None
+    db_port = 5432
+    
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+    if not db_url.startswith("postgresql://"):
+        raise ValueError("Invalid protocol, must be postgresql:// or postgres://")
+        
+    url_body = db_url[len("postgresql://"):]
+    
+    if '@' in url_body:
+        creds, host_part = url_body.rsplit('@', 1)
+        if ':' in creds:
+            db_user, db_password = creds.split(':', 1)
+        else:
+            db_user = creds
+            db_password = None
+    else:
+        host_part = url_body
+        db_user = None
+        db_password = None
+        
+    if '/' in host_part:
+        host_port, path_query = host_part.split('/', 1)
+        if '?' in path_query:
+            db_name, _ = path_query.split('?', 1)
+        else:
+            db_name = path_query
+    else:
+        host_port = host_part
+        db_name = None
+        
+    if ':' in host_port:
+        db_host, port_str = host_port.rsplit(':', 1)
+        try:
+            db_port = int(port_str)
+        except ValueError:
+            db_host = host_port
+            db_port = 5432
+    else:
+        db_host = host_port
+        
+    if db_name:
+        db_name = urllib.parse.unquote(db_name)
+    if db_user:
+        db_user = urllib.parse.unquote(db_user)
+    if db_password:
+        db_password = urllib.parse.unquote(db_password)
+        
+    return db_name, db_user, db_password, db_host, db_port
+
 if DATABASE_URL:
     try:
-        # Check if URL starts with postgres:// and replace with postgresql:// if needed for Peewee/SQLAlchemy compatibility
-        if DATABASE_URL.startswith("postgres://"):
-            DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-        
-        # Parse connection parameters from URL
-        url = urllib.parse.urlparse(DATABASE_URL)
+        db_name, db_user, db_password, db_host, db_port = parse_db_url(DATABASE_URL)
         db = PostgresqlDatabase(
-            url.database if hasattr(url, 'database') else url.path[1:],
-            user=url.username,
-            password=url.password,
-            host=url.hostname,
-            port=url.port or 5432,
+            db_name,
+            user=db_user,
+            password=db_password,
+            host=db_host,
+            port=db_port,
             sslmode='require' # Neon/Supabase require SSL
         )
         logger.info("Database: Initialized PostgreSQL database connection from DATABASE_URL.")

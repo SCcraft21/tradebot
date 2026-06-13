@@ -5,7 +5,7 @@ trading:
   timeframe: 15m
   mode: paper
   exchange: bybit
-  api_url: "https://api-singapore.bybit.com"
+  api_url: "https://api.bytick.com"
 
 strategy:
   rsi_period: 14

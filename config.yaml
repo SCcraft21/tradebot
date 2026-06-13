@@ -6,7 +6,7 @@ trading:
   exchange: bybit
   demo_trading: true
   backtest_limit: 5000
-  api_url: "https://api-singapore.bybit.com"
+  api_url: "https://api.bytick.com"
 
 strategy:
   rsi_period: 14

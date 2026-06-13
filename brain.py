@@ -7,10 +7,6 @@ import re
 logger = logging.getLogger(__name__)
 
 def _clean_json_response(text: str) -> str:
-    """
-    Cleans up any conversational prefix/suffix or markdown fences (e.g. ```json ... ```) 
-    from the LLM text output to isolate the JSON object.
-    """
     text = text.strip()
     if "```" in text:
         start = text.find("{")

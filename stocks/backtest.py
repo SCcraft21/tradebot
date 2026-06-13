@@ -100,7 +100,7 @@ class StocksOptionsBacktester:
     def __init__(self, target_dte: int = 30, target_delta: float = -0.25, spread_width: float = 100.0, 
                  min_iv_rank: float = 15.0, profit_target_pct: float = 0.40, stop_loss_mult: float = 2.0,
                  risk_free_rate: float = 0.045, initial_capital: float = 1000000.0, max_capital_per_spread_pct: float = 0.40,
-                 lot_size: float = 100.0):
+                 lot_size: float = 100.0, base_lots: int = 5, sized_down_lots: int = 1):
         self.target_dte = target_dte
         self.target_delta = target_delta
         self.spread_width = spread_width
@@ -111,6 +111,8 @@ class StocksOptionsBacktester:
         self.initial_capital = initial_capital
         self.max_capital_per_spread_pct = max_capital_per_spread_pct
         self.lot_size = lot_size
+        self.base_lots = base_lots
+        self.sized_down_lots = sized_down_lots
 
     def _norm_cdf(self, x: float) -> float:
         return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
@@ -311,9 +313,9 @@ class StocksOptionsBacktester:
                         if trades:
                             last_pnl = trades[-1]['pnl']
                         
-                        target_lots = 5
+                        target_lots = self.base_lots
                         if last_pnl < 0:
-                            target_lots = 1
+                            target_lots = self.sized_down_lots
                             
                         # Capital constraint check
                         if target_lots * one_contract_margin > capital:

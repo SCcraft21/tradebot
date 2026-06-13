@@ -752,7 +752,9 @@ def run_stocks_backtest(config):
         stop_loss_mult=stocks_cfg.get('stop_loss_mult', 2.0),
         max_capital_per_spread_pct=stocks_cfg.get('max_capital_per_spread_pct', 0.40),
         initial_capital=stocks_cfg.get('initial_capital', 1000000.0),
-        lot_size=stocks_cfg.get('lot_size', 100.0)
+        lot_size=stocks_cfg.get('lot_size', 100.0),
+        base_lots=stocks_cfg.get('base_lots', 5),
+        sized_down_lots=stocks_cfg.get('sized_down_lots', 1)
     )
     
     hist_data = {}

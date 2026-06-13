@@ -68,7 +68,7 @@ stocks:
   initial_capital: 500000.0
   lot_size: 50
   adaptive_sizing: true
-  base_lots: 5
+  base_lots: 10
   sized_down_lots: 1
 
 

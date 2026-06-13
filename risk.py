@@ -61,45 +61,58 @@ class RiskManager:
             
         return capital_to_risk / current_price
 
-    def calculate_tp_sl(self, entry_price: float, atr: float = None) -> Tuple[float, float]:
+    def calculate_tp_sl(self, entry_price: float, atr: float = None, direction: str = 'BUY') -> Tuple[float, float]:
         if atr is not None and not pd.isna(atr) and atr > 0:
-            take_profit = entry_price + (self.tp_atr_mult * atr)
-            stop_loss = entry_price - (self.sl_atr_mult * atr)
-            logger.info(f"Calculated ATR-based exits: TP={take_profit:.2f} (Entry+{self.tp_atr_mult}*ATR), SL={stop_loss:.2f} (Entry-{self.sl_atr_mult}*ATR) [ATR={atr:.4f}]")
+            if direction == 'SELL':
+                take_profit = entry_price - (self.tp_atr_mult * atr)
+                stop_loss = entry_price + (self.sl_atr_mult * atr)
+            else:
+                take_profit = entry_price + (self.tp_atr_mult * atr)
+                stop_loss = entry_price - (self.sl_atr_mult * atr)
+            logger.info(f"Calculated ATR-based exits: TP={take_profit:.2f} (Entry-{self.tp_atr_mult}*ATR), SL={stop_loss:.2f} (Entry+{self.sl_atr_mult}*ATR) [ATR={atr:.4f}, Dir={direction}]")
         else:
-            take_profit = entry_price * (1 + self.take_profit_pct)
-            stop_loss = entry_price * (1 - self.stop_loss_pct)
-            logger.info(f"Calculated Pct-based exits: TP={take_profit:.2f} (+{self.take_profit_pct*100}%), SL={stop_loss:.2f} (-{self.stop_loss_pct*100}%)")
+            if direction == 'SELL':
+                take_profit = entry_price * (1.0 - self.take_profit_pct)
+                stop_loss = entry_price * (1.0 + self.stop_loss_pct)
+            else:
+                take_profit = entry_price * (1.0 + self.take_profit_pct)
+                stop_loss = entry_price * (1.0 - self.stop_loss_pct)
+            logger.info(f"Calculated Pct-based exits: TP={take_profit:.2f} (+{self.take_profit_pct*100}%), SL={stop_loss:.2f} (-{self.stop_loss_pct*100}%) [Dir={direction}]")
         return take_profit, stop_loss
         
-    def register_trade(self, symbol: str, amount: float, entry_price: float, atr: float = None):
-        tp, sl = self.calculate_tp_sl(entry_price, atr)
+    def register_trade(self, symbol: str, amount: float, entry_price: float, direction: str = 'BUY', atr: float = None):
+        tp, sl = self.calculate_tp_sl(entry_price, atr, direction)
         self.open_trades[symbol] = {
             'amount': amount,
             'entry_price': entry_price,
             'take_profit': tp,
-            'stop_loss': sl
+            'stop_loss': sl,
+            'direction': direction
         }
         from db import save_crypto_trade
-        save_crypto_trade(symbol, amount, entry_price, tp, sl)
-        logger.info(f"Registered trade: {symbol} at {entry_price:.2f} | TP: {tp:.2f} | SL: {sl:.2f}")
-
+        save_crypto_trade(symbol, amount, entry_price, tp, sl, direction)
+        logger.info(f"Registered trade: {symbol} ({direction}) at {entry_price:.2f} | TP: {tp:.2f} | SL: {sl:.2f}")
+ 
     def close_trade(self, symbol: str, exit_price: float, reason: str = 'MANUAL'):
         if symbol in self.open_trades:
             trade = self.open_trades.pop(symbol)
-            pnl = (exit_price - trade['entry_price']) * trade['amount']
+            direction = trade.get('direction', 'BUY')
+            if direction == 'SELL':
+                pnl = (trade['entry_price'] - exit_price) * trade['amount']
+            else:
+                pnl = (exit_price - trade['entry_price']) * trade['amount']
             self.daily_pnl += pnl
             from db import remove_crypto_trade, save_closed_trade
             remove_crypto_trade(symbol)
             save_closed_trade(
                 asset_type='crypto',
                 symbol=symbol,
-                direction='BUY',
+                direction=direction,
                 amount=trade['amount'],
                 entry_price=trade['entry_price'],
                 exit_price=exit_price,
                 pnl=pnl,
                 reason=reason
             )
-            logger.info(f"Closed trade for {symbol} at {exit_price:.2f}. PnL: ₹{pnl:.2f} | Reason: {reason}")
+            logger.info(f"Closed trade for {symbol} ({direction}) at {exit_price:.2f}. PnL: Rs.{pnl:.2f} | Reason: {reason}")
 

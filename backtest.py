@@ -19,28 +19,64 @@ class Backtester:
             df_signals = self.strategy.generate_signals(df)
             
             in_position = False
+            direction = None
             entry_price, amount, tp, sl = 0.0, 0.0, 0.0, 0.0
+            atr_val = 0.0
             
             # Step through historical data mimicking real time behavior
             for index, row in df_signals.iterrows():
-                # End Position checks using intrabar high/low proxies
+                # End/Management Position checks using intrabar high/low proxies
                 if in_position:
-                    if row['high'] >= tp:
-                        capital += amount * (tp - entry_price)
-                        trades.append({'symbol': symbol, 'pnl': amount * (tp - entry_price)})
-                        in_position = False
-                    elif row['low'] <= sl:
-                        capital += amount * (sl - entry_price)
-                        trades.append({'symbol': symbol, 'pnl': amount * (sl - entry_price)})
-                        in_position = False
+                    # Trailing Stop check (to breakeven)
+                    if atr_val and not pd.isna(atr_val) and atr_val > 0:
+                        if direction == 'BUY' and sl < entry_price:
+                            if row['high'] >= entry_price + 1.5 * atr_val:
+                                sl = entry_price
+                                logger.debug(f"Backtest: Trailed long stop to breakeven for {symbol} at {entry_price}")
+                        elif direction == 'SELL' and sl > entry_price:
+                            if row['low'] <= entry_price - 1.5 * atr_val:
+                                sl = entry_price
+                                logger.debug(f"Backtest: Trailed short stop to breakeven for {symbol} at {entry_price}")
+
+                    if direction == 'BUY':
+                        if row['low'] <= sl:
+                            pnl = amount * (sl - entry_price)
+                            capital += pnl
+                            trades.append({'symbol': symbol, 'pnl': pnl})
+                            in_position = False
+                        elif row['high'] >= tp:
+                            pnl = amount * (tp - entry_price)
+                            capital += pnl
+                            trades.append({'symbol': symbol, 'pnl': pnl})
+                            in_position = False
+                    elif direction == 'SELL':
+                        if row['high'] >= sl:
+                            pnl = amount * (entry_price - sl)
+                            capital += pnl
+                            trades.append({'symbol': symbol, 'pnl': pnl})
+                            in_position = False
+                        elif row['low'] <= tp:
+                            pnl = amount * (entry_price - tp)
+                            capital += pnl
+                            trades.append({'symbol': symbol, 'pnl': pnl})
+                            in_position = False
                 
                 # Entry Position Check
-                if not in_position and row['buy_signal']:
-                    amount = (capital * self.risk_manager.max_capital_per_trade_pct) / row['close']
-                    entry_price = row['close']
-                    atr_val = row.get('atr', None)
-                    tp, sl = self.risk_manager.calculate_tp_sl(entry_price, atr=atr_val)
-                    in_position = True
+                if not in_position:
+                    if row['buy_signal']:
+                        amount = (capital * self.risk_manager.max_capital_per_trade_pct) / row['close']
+                        entry_price = row['close']
+                        atr_val = row.get('atr', None)
+                        tp, sl = self.risk_manager.calculate_tp_sl(entry_price, atr=atr_val, direction='BUY')
+                        direction = 'BUY'
+                        in_position = True
+                    elif row['sell_signal']:
+                        amount = (capital * self.risk_manager.max_capital_per_trade_pct) / row['close']
+                        entry_price = row['close']
+                        atr_val = row.get('atr', None)
+                        tp, sl = self.risk_manager.calculate_tp_sl(entry_price, atr=atr_val, direction='SELL')
+                        direction = 'SELL'
+                        in_position = True
         
         # Calculate key metrics
         wins = [t for t in trades if t['pnl'] > 0]

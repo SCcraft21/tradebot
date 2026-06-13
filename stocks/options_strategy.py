@@ -90,6 +90,17 @@ class BullPutSpreadStrategy:
             logger.info(f"No option chains found for {symbol}.")
             return {}
             
+        # Calculate dynamic spread width based on stock price
+        ref_price = current_price if current_price else current_close
+        if ref_price <= 500.0:
+            width = 5.0
+        elif ref_price <= 1000.0:
+            width = 10.0
+        elif ref_price <= 2000.0:
+            width = 20.0
+        else:
+            width = 50.0
+            
         # 3. Calculate IV Rank
         ref_df = puts if not puts.empty else calls
         atm_opts = ref_df[abs(ref_df['strike'] - current_price) / current_price <= 0.02]

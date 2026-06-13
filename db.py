@@ -95,6 +95,7 @@ class CryptoTradeRecord(BaseModel):
     entry_price = FloatField()
     take_profit = FloatField()
     stop_loss = FloatField()
+    direction = CharField(default='BUY')
     created_at = DateTimeField(default=datetime.datetime.now)
 
 class StockSpreadRecord(BaseModel):
@@ -127,9 +128,18 @@ def init_db():
     if db.is_closed():
         db.connect()
     db.create_tables([CryptoTradeRecord, StockSpreadRecord, TradeHistoryRecord], safe=True)
+    
+    # Run migration to add direction column if missing
+    try:
+        db.execute_sql("ALTER TABLE cryptotraderecord ADD COLUMN direction VARCHAR(255) DEFAULT 'BUY'")
+        logger.info("Database Migration: Successfully added 'direction' column to CryptoTradeRecord table.")
+    except Exception:
+        # Ignore if the column already exists
+        pass
+        
     logger.info(f"Database trading_state.db initialized and tables verified.")
 
-def save_crypto_trade(symbol: str, amount: float, entry_price: float, tp: float, sl: float):
+def save_crypto_trade(symbol: str, amount: float, entry_price: float, tp: float, sl: float, direction: str = 'BUY'):
     try:
         # Delete if exists to avoid unique constraint issue
         CryptoTradeRecord.delete().where(CryptoTradeRecord.symbol == symbol).execute()
@@ -138,7 +148,8 @@ def save_crypto_trade(symbol: str, amount: float, entry_price: float, tp: float,
             amount=amount,
             entry_price=entry_price,
             take_profit=tp,
-            stop_loss=sl
+            stop_loss=sl,
+            direction=direction
         )
         logger.info(f"DB: Saved active trade for {symbol}")
     except Exception as e:
@@ -160,7 +171,8 @@ def load_all_crypto_trades() -> dict:
                 'amount': r.amount,
                 'entry_price': r.entry_price,
                 'take_profit': r.take_profit,
-                'stop_loss': r.stop_loss
+                'stop_loss': r.stop_loss,
+                'direction': getattr(r, 'direction', 'BUY')
             }
         return trades
     except Exception as e:

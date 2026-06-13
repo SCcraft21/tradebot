@@ -53,35 +53,48 @@ class SwingStrategy:
         df['volume_spike'] = df['volume'] > (1.5 * df['volume_sma20'])
 
         # Signal Logic
-        # 1. RSI oversold
-        rsi_condition = df['rsi'] < self.rsi_oversold
+        # 1. RSI oversold (Long) or overbought (Short)
+        rsi_oversold_condition = df['rsi'] < self.rsi_oversold
+        rsi_overbought = 100.0 - self.rsi_oversold
+        rsi_overbought_condition = df['rsi'] > rsi_overbought
         
         # 2. Price near EMA50 (within proximity percentage)
         price_near_ema = abs(df['close'] - df['ema50']) / df['ema50'] <= self.ema_proximity_pct
         price_above_ema = df['close'] >= df['ema50'] * (1 - self.ema_proximity_pct)
+        price_below_ema = df['close'] <= df['ema50'] * (1 + self.ema_proximity_pct)
         
-        buy_signal = rsi_condition & price_near_ema & price_above_ema
+        buy_signal = rsi_oversold_condition & price_near_ema & price_above_ema
+        sell_signal = rsi_overbought_condition & price_near_ema & price_below_ema
         
-        # 3. Long-term trend confirmation: price is above EMA 200
+        # 3. Long-term trend confirmation: price is above/below EMA 200
         if self.require_ema200:
             buy_signal = buy_signal & (df['close'] > df['ema200'])
+            sell_signal = sell_signal & (df['close'] < df['ema200'])
         
-        # 4. Momentum confirmation: MACD line > Signal line (bullish zone or crossover)
+        # 4. Momentum confirmation: MACD line cross
         if self.require_macd:
             buy_signal = buy_signal & (df['macd'] > df['macd_signal'])
+            sell_signal = sell_signal & (df['macd'] < df['macd_signal'])
             
         # 5. Volume Spike
         if self.require_volume_spike:
             buy_signal = buy_signal & df['volume_spike']
+            sell_signal = sell_signal & df['volume_spike']
 
         df['buy_signal'] = buy_signal
+        df['sell_signal'] = sell_signal
         
         return df
 
-    def get_latest_signal(self, df: pd.DataFrame) -> bool:
-        """Returns True if the very last closed candle fired a buy signal."""
+    def get_latest_signal(self, df: pd.DataFrame) -> str:
+        """Returns 'BUY', 'SELL', or None if the very last closed candle fired a signal."""
         df_signals = self.generate_signals(df)
-        if df_signals.empty or 'buy_signal' not in df_signals.columns:
-            return False
-        return bool(df_signals.iloc[-1]['buy_signal'])
+        if df_signals.empty:
+            return None
+        last_row = df_signals.iloc[-1]
+        if 'buy_signal' in last_row and last_row['buy_signal']:
+            return 'BUY'
+        if 'sell_signal' in last_row and last_row['sell_signal']:
+            return 'SELL'
+        return None
 

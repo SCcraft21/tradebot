@@ -2,7 +2,6 @@ import argparse
 import sys
 import yaml
 import time
-
 # Configure stdout and stderr to handle UTF-8 symbols like ₹
 if sys.platform.startswith('win'):
     try:
@@ -344,27 +343,116 @@ class TradingBotEngine:
         # 1. Check Crypto Exits
         if self.asset_mode in ("crypto", "both") or len(self.crypto_risk.open_trades) > 0:
             for symbol in list(self.crypto_risk.open_trades.keys()):
+                trade = self.crypto_risk.open_trades[symbol]
+                direction = trade.get('direction', 'BUY')
+                amount = trade['amount']
+                entry_price = trade['entry_price']
+                tp = trade['take_profit']
+                sl = trade['stop_loss']
+                
                 if not self.is_paper:
                     try:
                         open_orders = self.crypto_fetcher.exchange.fetch_open_orders(symbol)
-                        if len(open_orders) == 0:
+                        pos_closed = True
+                        try:
+                            positions = self.crypto_fetcher.exchange.fetch_positions([symbol])
+                            for p in positions:
+                                if p['symbol'] == symbol:
+                                    size = float(p.get('contracts', 0) or p.get('size', 0))
+                                    if size != 0:
+                                        pos_closed = False
+                                    break
+                        except Exception as pe:
+                            logger.error(f"Error fetching position from Bybit: {pe}")
+                            pos_closed = len(open_orders) == 0
+                            
+                        if pos_closed:
                             ticker = self.crypto_fetcher.exchange.fetch_ticker(symbol)
-                            self.crypto_risk.close_trade(symbol, ticker['last'], reason='TP/SL')
-                            self.notifier.send_message(f"Closed trade for {symbol} at {ticker['last']:.2f}")
-                    except Exception:
-                        pass
+                            exit_price = ticker['last']
+                            try:
+                                self.crypto_fetcher.exchange.cancel_all_orders(symbol)
+                            except Exception:
+                                pass
+                            self.crypto_risk.close_trade(symbol, exit_price, reason='TP/SL')
+                            self.notifier.send_message(f"Closed trade for {symbol} ({direction}) at {exit_price:.2f}")
+                        else:
+                            df = self.crypto_fetcher.fetch_ohlcv(symbol, self.config['trading']['timeframe'], limit=300)
+                            if not df.empty:
+                                df_signals = self.crypto_strategy.generate_signals(df)
+                                if not df_signals.empty:
+                                    last_row = df_signals.iloc[-1]
+                                    last_price = last_row['close']
+                                    atr_val = last_row.get('atr', None)
+                                    
+                                    if atr_val and not pd.isna(atr_val) and atr_val > 0:
+                                        if direction == 'BUY' and sl < entry_price:
+                                            if last_price >= entry_price + 1.5 * atr_val:
+                                                logger.info(f"Trailing long stop for {symbol} to breakeven @ {entry_price:.2f} (Current: {last_price:.2f}, ATR: {atr_val:.4f})")
+                                                try:
+                                                    self.crypto_fetcher.exchange.cancel_all_orders(symbol)
+                                                    self.crypto_execution.execute_limit_sell(symbol, amount, tp)
+                                                    self.crypto_execution.execute_stop_market_sell(symbol, amount, entry_price)
+                                                    trade['stop_loss'] = entry_price
+                                                    from db import save_crypto_trade
+                                                    save_crypto_trade(symbol, amount, entry_price, tp, entry_price, 'BUY')
+                                                    self.notifier.send_message(f"🔄 Trailed stop to breakeven ({entry_price:.2f}) for {symbol} (BUY)")
+                                                except Exception as err:
+                                                    logger.error(f"Failed to update live stop loss for {symbol}: {err}")
+                                        elif direction == 'SELL' and sl > entry_price:
+                                            if last_price <= entry_price - 1.5 * atr_val:
+                                                logger.info(f"Trailing short stop for {symbol} to breakeven @ {entry_price:.2f} (Current: {last_price:.2f}, ATR: {atr_val:.4f})")
+                                                try:
+                                                    self.crypto_fetcher.exchange.cancel_all_orders(symbol)
+                                                    self.crypto_execution.execute_limit_buy(symbol, amount, tp)
+                                                    self.crypto_execution.execute_stop_market_buy(symbol, amount, entry_price)
+                                                    trade['stop_loss'] = entry_price
+                                                    from db import save_crypto_trade
+                                                    save_crypto_trade(symbol, amount, entry_price, tp, entry_price, 'SELL')
+                                                    self.notifier.send_message(f"🔄 Trailed stop to breakeven ({entry_price:.2f}) for {symbol} (SELL)")
+                                                except Exception as err:
+                                                    logger.error(f"Failed to update live stop loss for {symbol}: {err}")
+                    except Exception as e:
+                        logger.error(f"Error checking live exits for {symbol}: {e}")
                 else:
                     try:
-                        df = self.crypto_fetcher.fetch_ohlcv(symbol, self.config['trading']['timeframe'], limit=5)
+                        df = self.crypto_fetcher.fetch_ohlcv(symbol, self.config['trading']['timeframe'], limit=300)
                         if not df.empty:
-                            last_price = df.iloc[-1]['close']
-                            trade = self.crypto_risk.open_trades[symbol]
-                            if last_price >= trade['take_profit']:
-                                self.crypto_risk.close_trade(symbol, trade['take_profit'], reason='TP')
-                                self.notifier.send_message(f"Crypto TP hit for {symbol} at {trade['take_profit']:.2f}")
-                            elif last_price <= trade['stop_loss']:
-                                self.crypto_risk.close_trade(symbol, trade['stop_loss'], reason='SL')
-                                self.notifier.send_message(f"Crypto SL hit for {symbol} at {trade['stop_loss']:.2f}")
+                            df_signals = self.crypto_strategy.generate_signals(df)
+                            if not df_signals.empty:
+                                last_row = df_signals.iloc[-1]
+                                last_price = last_row['close']
+                                atr_val = last_row.get('atr', None)
+                                
+                                if atr_val and not pd.isna(atr_val) and atr_val > 0:
+                                    if direction == 'BUY' and sl < entry_price:
+                                        if last_price >= entry_price + 1.5 * atr_val:
+                                            trade['stop_loss'] = entry_price
+                                            sl = entry_price
+                                            from db import save_crypto_trade
+                                            save_crypto_trade(symbol, amount, entry_price, tp, entry_price, 'BUY')
+                                            self.notifier.send_message(f"🔄 [PAPER] Trailed stop to breakeven ({entry_price:.2f}) for {symbol} (BUY)")
+                                    elif direction == 'SELL' and sl > entry_price:
+                                        if last_price <= entry_price - 1.5 * atr_val:
+                                            trade['stop_loss'] = entry_price
+                                            sl = entry_price
+                                            from db import save_crypto_trade
+                                            save_crypto_trade(symbol, amount, entry_price, tp, entry_price, 'SELL')
+                                            self.notifier.send_message(f"🔄 [PAPER] Trailed stop to breakeven ({entry_price:.2f}) for {symbol} (SELL)")
+                                
+                                if direction == 'BUY':
+                                    if last_price >= tp:
+                                        self.crypto_risk.close_trade(symbol, tp, reason='TP')
+                                        self.notifier.send_message(f"🏆 [PAPER] Crypto TP hit for {symbol} at {tp:.2f}")
+                                    elif last_price <= sl:
+                                        self.crypto_risk.close_trade(symbol, sl, reason='SL')
+                                        self.notifier.send_message(f"📉 [PAPER] Crypto SL hit for {symbol} at {sl:.2f}")
+                                elif direction == 'SELL':
+                                    if last_price <= tp:
+                                        self.crypto_risk.close_trade(symbol, tp, reason='TP')
+                                        self.notifier.send_message(f"🏆 [PAPER] Crypto TP hit for {symbol} at {tp:.2f}")
+                                    elif last_price >= sl:
+                                        self.crypto_risk.close_trade(symbol, sl, reason='SL')
+                                        self.notifier.send_message(f"📉 [PAPER] Crypto SL hit for {symbol} at {sl:.2f}")
                     except Exception as e:
                         logger.error(f"Error checking crypto paper exit: {e}")
 
@@ -553,49 +641,62 @@ class TradingBotEngine:
                     f"Vol Spike: {last_row.get('volume_spike', False)}"
                 )
                 
-                if bool(last_row.get('buy_signal', False)):
+                is_buy = bool(last_row.get('buy_signal', False))
+                is_sell = bool(last_row.get('sell_signal', False))
+                
+                if is_buy or is_sell:
+                     direction = 'BUY' if is_buy else 'SELL'
                      current_price = last_row['close']
                      
                      # LLM Brain Verification
                      if self.brain_enabled:
-                         logging.info(f"🧠 Querying TradingBrain to verify strategy BUY signal for {symbol}...")
-                         brain_result = self.crypto_brain.analyze_market(symbol, timeframe, df)
-                         decision = brain_result.get("decision", "APPROVE")
-                         rationale = brain_result.get("rationale", "")
-                         confidence = brain_result.get("confidence", 1.0)
-                         
-                         if decision == "VETO" and self.veto_power:
-                             logging.info(f"🛑 Trade entry for {symbol} VETOED by TradingBrain (Confidence: {confidence:.2f}). Rationale: {rationale}")
-                             continue
-                         else:
-                             logging.info(f"✅ Trade entry for {symbol} APPROVED by TradingBrain (Confidence: {confidence:.2f}). Rationale: {rationale}")
+                          logging.info(f"🧠 Querying TradingBrain to verify strategy {direction} signal for {symbol}...")
+                          brain_result = self.crypto_brain.analyze_market(symbol, timeframe, df)
+                          decision = brain_result.get("decision", "APPROVE")
+                          rationale = brain_result.get("rationale", "")
+                          confidence = brain_result.get("confidence", 1.0)
+                          
+                          if decision == "VETO" and self.veto_power:
+                              logging.info(f"🛑 Trade entry for {symbol} VETOED by TradingBrain (Confidence: {confidence:.2f}). Rationale: {rationale}")
+                              continue
+                          else:
+                              logging.info(f"✅ Trade entry for {symbol} APPROVED by TradingBrain (Confidence: {confidence:.2f}). Rationale: {rationale}")
                      else:
-                         rationale = "Strategy conditions satisfied."
-                         
+                          rationale = "Strategy conditions satisfied."
+                          
                      amount = self.crypto_risk.calculate_position_size(self.crypto_balance, current_price)
-                     order = self.crypto_execution.execute_market_buy(symbol, amount)
-                     if order:
-                         entry_price = order.get('price') or current_price
-                         atr_val = df.iloc[-1].get('atr') if 'atr' in df.columns else None
-                         self.crypto_risk.register_trade(symbol, amount, entry_price, atr=atr_val)
-                         tp, sl = self.crypto_risk.calculate_tp_sl(entry_price, atr=atr_val)
-                         self.crypto_execution.execute_limit_sell(symbol, amount, tp)
-                         self.crypto_execution.execute_stop_market_sell(symbol, amount, sl)
+                     if direction == 'BUY':
+                         order = self.crypto_execution.execute_market_buy(symbol, amount)
+                     else:
+                         order = self.crypto_execution.execute_market_sell(symbol, amount)
                          
-                         # Generate natural language commentary
-                         if self.brain_enabled:
-                             commentary = self.crypto_brain.explain_trade(
-                                 symbol=symbol,
-                                 action="BUY",
-                                 entry=entry_price,
-                                 tp=tp,
-                                 sl=sl,
-                                 rationale=rationale
-                             )
-                         else:
-                             commentary = f"🚀 BUY {symbol} @ {entry_price:.2f} | TP: {tp:.2f} | SL: {sl:.2f}"
-                             
-                         self.notifier.send_message(commentary)
+                     if order:
+                          entry_price = order.get('price') or current_price
+                          atr_val = df.iloc[-1].get('atr') if 'atr' in df.columns else None
+                          self.crypto_risk.register_trade(symbol, amount, entry_price, direction=direction, atr=atr_val)
+                          tp, sl = self.crypto_risk.calculate_tp_sl(entry_price, atr=atr_val, direction=direction)
+                          
+                          if direction == 'BUY':
+                              self.crypto_execution.execute_limit_sell(symbol, amount, tp)
+                              self.crypto_execution.execute_stop_market_sell(symbol, amount, sl)
+                          else:
+                              self.crypto_execution.execute_limit_buy(symbol, amount, tp)
+                              self.crypto_execution.execute_stop_market_buy(symbol, amount, sl)
+                          
+                          # Generate natural language commentary
+                          if self.brain_enabled:
+                              commentary = self.crypto_brain.explain_trade(
+                                  symbol=symbol,
+                                  action=direction,
+                                  entry=entry_price,
+                                  tp=tp,
+                                  sl=sl,
+                                  rationale=rationale
+                              )
+                          else:
+                              commentary = f"🚀 {direction} {symbol} @ {entry_price:.2f} | TP: {tp:.2f} | SL: {sl:.2f}"
+                              
+                          self.notifier.send_message(commentary)
 
         # 2. Check Stocks Entries
         if self.asset_mode in ("stocks", "both"):

@@ -1,6 +1,7 @@
 import logging
 import pandas as pd
 from typing import Dict, Tuple
+from datetime import date
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +24,23 @@ class RiskManager:
         from db import load_all_crypto_trades
         self.open_trades: Dict[str, Dict] = load_all_crypto_trades() # Tracks active trades state locally
         self.daily_pnl = 0.0
-        self.initial_balance = 0.0 
+        self.initial_balance = 0.0
+        self._last_pnl_reset_date = date.today()
+
+    def _check_daily_reset(self):
+        """Reset daily PnL at the start of each new calendar day."""
+        today = date.today()
+        if today != self._last_pnl_reset_date:
+            logger.info(f"Daily PnL rollover: {self._last_pnl_reset_date} → {today} | Yesterday's PnL: ₹{self.daily_pnl:.2f}")
+            self.daily_pnl = 0.0
+            self._last_pnl_reset_date = today
 
     def set_initial_balance(self, balance: float):
         self.initial_balance = balance
         
     def can_open_trade(self) -> bool:
+        self._check_daily_reset()
+        
         if len(self.open_trades) >= self.max_open_trades:
             return False
             

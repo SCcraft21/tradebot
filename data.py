@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class DataFetcher:
-    def __init__(self, exchange_id: str, api_key: str, api_secret: str, paper: bool = True, demo_trading: bool = False, api_url: str = None):
+    def __init__(self, exchange_id: str, api_key: str, api_secret: str, paper: bool = True, demo_trading: bool = False, api_url: str = None, proxy: str = None):
         exchange_class = getattr(ccxt, exchange_id)
         
         is_placeholder = lambda val: (
@@ -33,6 +33,15 @@ class DataFetcher:
             }
             logger.info(f"Routing '{exchange_id}' API requests through custom URL: {api_url}")
         
+        # Proxy support for geo-blocked regions
+        if proxy:
+            if proxy.startswith('socks'):
+                config['socksProxy'] = proxy
+            else:
+                config['httpsProxy'] = proxy
+                config['httpProxy'] = proxy
+            logger.info(f"Routing '{exchange_id}' API requests through proxy: {proxy}")
+        
         if not paper and not is_placeholder(api_key) and not is_placeholder(api_secret):
             config['apiKey'] = api_key
             config['secret'] = api_secret
@@ -53,6 +62,35 @@ class DataFetcher:
                 if is_placeholder(api_key):
                     self.exchange.set_sandbox_mode(True)
                     logger.info(f"Enabled Testnet/Sandbox mode for exchange '{exchange_id}'.")
+        
+        # Circuit breaker: track consecutive failures per symbol
+        self._failure_counts = {}  # symbol -> consecutive failure count
+        self._skip_until = {}     # symbol -> timestamp to skip until
+        self._circuit_breaker_threshold = 3   # failures before skipping
+        self._circuit_breaker_cooldown = 300  # seconds to skip (5 min)
+
+    def _is_circuit_open(self, symbol: str) -> bool:
+        """Check if circuit breaker is open (symbol should be skipped)."""
+        skip_time = self._skip_until.get(symbol)
+        if skip_time and time.time() < skip_time:
+            return True
+        elif skip_time and time.time() >= skip_time:
+            # Cooldown expired, reset
+            self._skip_until.pop(symbol, None)
+            self._failure_counts.pop(symbol, None)
+        return False
+
+    def _record_failure(self, symbol: str):
+        """Record a fetch failure for circuit breaker tracking."""
+        self._failure_counts[symbol] = self._failure_counts.get(symbol, 0) + 1
+        if self._failure_counts[symbol] >= self._circuit_breaker_threshold:
+            self._skip_until[symbol] = time.time() + self._circuit_breaker_cooldown
+            logger.warning(f"Circuit breaker OPEN for {symbol}: {self._failure_counts[symbol]} consecutive failures. Skipping for {self._circuit_breaker_cooldown}s.")
+
+    def _record_success(self, symbol: str):
+        """Reset failure counter on successful fetch."""
+        self._failure_counts.pop(symbol, None)
+        self._skip_until.pop(symbol, None)
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 100, retries: int = 3) -> pd.DataFrame:
         """Fetch OHLCV historical data with pagination support for large limits."""
@@ -63,6 +101,12 @@ class DataFetcher:
         if not timeframe or not isinstance(timeframe, str) or not re.match(r'^[a-zA-Z0-9]+$', timeframe):
             logger.warning(f"Rejected unsafe timeframe input in fetch_ohlcv: '{timeframe}'")
             return pd.DataFrame()
+        
+        # Circuit breaker check
+        if self._is_circuit_open(symbol):
+            logger.debug(f"Circuit breaker active for {symbol}, skipping fetch.")
+            return pd.DataFrame()
+        
         # If limit is small, standard single request
         if limit <= 500:
             for attempt in range(retries):
@@ -71,16 +115,20 @@ class DataFetcher:
                     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                     df.set_index('timestamp', inplace=True)
+                    self._record_success(symbol)
                     return df
                 except ccxt.NetworkError as e:
                     if attempt == retries - 1:
                         logger.error(f"Network error fetching {symbol}: {e}")
+                        self._record_failure(symbol)
                     time.sleep(2 ** attempt)
                 except ccxt.ExchangeError as e:
                     logger.error(f"Exchange error fetching {symbol}: {e}")
+                    self._record_failure(symbol)
                     break
                 except Exception as e:
                     logger.error(f"Unexpected error fetching {symbol}: {e}")
+                    self._record_failure(symbol)
                     break
             return pd.DataFrame()
             

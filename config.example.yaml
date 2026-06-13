@@ -8,6 +8,9 @@ trading:
   backtest_limit: 5000
   initial_capital: 100.0
   api_url: "https://api.bybit.com"
+  proxy: null  # Optional: "socks5://127.0.0.1:1080" or "http://proxy:8080"
+  min_24h_volume: 1000000  # Minimum 24h volume (USDT) to consider a symbol
+  max_symbols: 50  # Maximum number of symbols to scan per cycle
 
 strategy:
   rsi_period: 14
@@ -36,12 +39,15 @@ brain:
   model: "gemini-1.5-flash"
   veto_power: true
 
+# Credentials are loaded from environment variables or .env file.
+# See .env.example for the list of required variables.
+# You can still put them here as fallback, but .env takes precedence.
 credentials:
-  api_key: "jNC14wXCsRTRrVGpXN"
-  api_secret: "2mnBZ42OzIHFrNOID3qQoRtEIYrbkztnxLf6"
-  gemini_api_key: "AQ.Ab8RN6KbiYdWB6JBjvX4r1rGNxYYqWSrFtHRHRWY2N3Nxsyg1Qy6u4¬q1"
-  telegram_token: "8779263598:AAGIl9T9xfXktUZXBmgGlbKJoQIDe8kPQEY"
-  telegram_chat_id: "7911575340"
+  api_key: "YOUR_BYBIT_API_KEY"
+  api_secret: "YOUR_BYBIT_API_SECRET"
+  gemini_api_key: "YOUR_GEMINI_API_KEY"
+  telegram_token: "YOUR_TELEGRAM_TOKEN"
+  telegram_chat_id: "YOUR_TELEGRAM_CHAT_ID"
   discord_webhook: ""
   dhan_client_id: "YOUR_DHAN_CLIENT_ID"
   dhan_access_token: "YOUR_DHAN_ACCESS_TOKEN"
@@ -71,6 +77,3 @@ stocks:
   adaptive_sizing: true
   base_lots: 10
   sized_down_lots: 1
-
-
-

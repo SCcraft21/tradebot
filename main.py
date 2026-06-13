@@ -63,6 +63,13 @@ def setup_logging(config, is_backtest=False):
 
 def load_config(path='config.yaml'):
     import os
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        logger.info("Loaded environment variables from .env file.")
+    except ImportError:
+        pass  # python-dotenv not installed, rely on system env vars
+    
     with open(path, 'r') as f:
         config = yaml.safe_load(f)
         
@@ -70,16 +77,20 @@ def load_config(path='config.yaml'):
         config['credentials'] = {}
         
     # Environment variable overrides for secure cloud/Docker hosting
-    if 'TELEGRAM_TOKEN' in os.environ:
-        config['credentials']['telegram_token'] = os.environ['TELEGRAM_TOKEN']
-    if 'TELEGRAM_CHAT_ID' in os.environ:
-        config['credentials']['telegram_chat_id'] = os.environ['TELEGRAM_CHAT_ID']
-    if 'BYBIT_API_KEY' in os.environ:
-        config['credentials']['api_key'] = os.environ['BYBIT_API_KEY']
-    if 'BYBIT_API_SECRET' in os.environ:
-        config['credentials']['api_secret'] = os.environ['BYBIT_API_SECRET']
-    if 'GEMINI_API_KEY' in os.environ:
-        config['credentials']['gemini_api_key'] = os.environ['GEMINI_API_KEY']
+    env_mappings = {
+        'BYBIT_API_KEY': 'api_key',
+        'BYBIT_API_SECRET': 'api_secret',
+        'GEMINI_API_KEY': 'gemini_api_key',
+        'TELEGRAM_TOKEN': 'telegram_token',
+        'TELEGRAM_CHAT_ID': 'telegram_chat_id',
+        'DISCORD_WEBHOOK': 'discord_webhook',
+        'DHAN_CLIENT_ID': 'dhan_client_id',
+        'DHAN_ACCESS_TOKEN': 'dhan_access_token',
+    }
+    for env_key, config_key in env_mappings.items():
+        val = os.environ.get(env_key)
+        if val:
+            config['credentials'][config_key] = val
         
     return config
 
@@ -95,13 +106,15 @@ class TradingBotEngine:
         
         # Crypto Components
         demo_trading = config.get('trading', {}).get('demo_trading', False)
+        proxy = config.get('trading', {}).get('proxy')
         self.crypto_fetcher = DataFetcher(
             config['trading']['exchange'], 
             config['credentials']['api_key'], 
             config['credentials']['api_secret'], 
             paper=self.is_paper,
             demo_trading=demo_trading,
-            api_url=config.get('trading', {}).get('api_url')
+            api_url=config.get('trading', {}).get('api_url'),
+            proxy=proxy
         )
         strat_cfg = config.get('strategy', {})
         self.crypto_strategy = SwingStrategy(
@@ -610,15 +623,36 @@ class TradingBotEngine:
         if self.asset_mode in ("crypto", "both"):
             symbols = self.config['trading'].get('symbols', [])
             if not symbols or (len(symbols) == 1 and symbols[0].lower() == 'all'):
-                try:
-                    self.crypto_fetcher.exchange.load_markets()
-                    symbols = [
-                        sym for sym, market in self.crypto_fetcher.exchange.markets.items()
-                        if market.get('active') and sym.endswith('/USDT')
-                    ]
-                except Exception as e:
-                    logging.error(f"Error loading all ccxt cryptos: {e}. Falling back to default list.")
-                    symbols = ['BTC/USDT', 'ETH/USDT']
+                # Use cached filtered symbol list (refresh every hour)
+                now = time.time()
+                if not hasattr(self, '_cached_symbols') or not hasattr(self, '_symbols_cache_time') or (now - self._symbols_cache_time) > 3600:
+                    try:
+                        self.crypto_fetcher.exchange.load_markets()
+                        min_volume = self.config['trading'].get('min_24h_volume', 1000000)
+                        max_symbols = self.config['trading'].get('max_symbols', 50)
+                        
+                        # Fetch tickers to get 24h volume data
+                        tickers = self.crypto_fetcher.exchange.fetch_tickers()
+                        usdt_pairs = []
+                        for sym, ticker in tickers.items():
+                            market = self.crypto_fetcher.exchange.markets.get(sym, {})
+                            if market.get('active') and sym.endswith('/USDT'):
+                                quote_volume = ticker.get('quoteVolume', 0) or 0
+                                if quote_volume >= min_volume:
+                                    usdt_pairs.append((sym, quote_volume))
+                        
+                        # Sort by volume descending and cap at max_symbols
+                        usdt_pairs.sort(key=lambda x: x[1], reverse=True)
+                        symbols = [sym for sym, _ in usdt_pairs[:max_symbols]]
+                        
+                        self._cached_symbols = symbols
+                        self._symbols_cache_time = now
+                        logging.info(f"Filtered {len(symbols)} symbols from {len(tickers)} tickers (min volume: {min_volume:,.0f} USDT, max: {max_symbols})")
+                    except Exception as e:
+                        logging.error(f"Error loading/filtering ccxt cryptos: {e}. Falling back to default list.")
+                        symbols = getattr(self, '_cached_symbols', ['BTC/USDT', 'ETH/USDT'])
+                else:
+                    symbols = self._cached_symbols
                     
             timeframe = self.config['trading']['timeframe']
             for symbol in symbols:
@@ -790,7 +824,7 @@ def run_backtest(config):
     strat_cfg = config.get('strategy', {})
     risk_cfg = config.get('risk', {})
     
-    fetcher = DataFetcher(trade_cfg.get('exchange', 'bybit'), '', '', paper=True, api_url=trade_cfg.get('api_url'))
+    fetcher = DataFetcher(trade_cfg.get('exchange', 'bybit'), '', '', paper=True, api_url=trade_cfg.get('api_url'), proxy=trade_cfg.get('proxy'))
     strategy = SwingStrategy(
         strat_cfg.get('rsi_period', 14), 
         strat_cfg.get('rsi_oversold', 35.0), 

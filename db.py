@@ -8,7 +8,7 @@ import datetime
 logger = logging.getLogger(__name__)
 
 # If DATABASE_URL is set in environment (standard on cloud hosts), use Postgres. Otherwise fallback to SQLite.
-DATABASE_URL = os.environ.get('DATABASE_URL')
+DATABASE_URL = os.environ.get('DATABASE_URL', '').strip() or None
 
 def parse_db_url(db_url):
     db_name = None
@@ -66,7 +66,7 @@ def parse_db_url(db_url):
         
     return db_name, db_user, db_password, db_host, db_port
 
-if DATABASE_URL:
+if DATABASE_URL and (DATABASE_URL.startswith('postgres://') or DATABASE_URL.startswith('postgresql://')):
     try:
         db_name, db_user, db_password, db_host, db_port = parse_db_url(DATABASE_URL)
         db = PostgresqlDatabase(

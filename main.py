@@ -70,6 +70,15 @@ def load_config(path='config.yaml'):
     except ImportError:
         pass  # python-dotenv not installed, rely on system env vars
     
+    # Fall back to config.example.yaml for cloud deploys where config.yaml is gitignored
+    if not os.path.exists(path):
+        fallback = path.replace('.yaml', '.example.yaml') if '.example.' not in path else None
+        if fallback and os.path.exists(fallback):
+            logger.info(f"Config file '{path}' not found. Using fallback '{fallback}'.")
+            path = fallback
+        else:
+            raise FileNotFoundError(f"Config file '{path}' not found and no fallback available.")
+    
     with open(path, 'r') as f:
         config = yaml.safe_load(f)
         

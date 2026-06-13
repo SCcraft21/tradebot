@@ -13,6 +13,44 @@ def fetch_fo_lot_sizes() -> dict:
     if _cached_lot_sizes:
         return _cached_lot_sizes
         
+    default_lots = {
+        '^NSEI': 50.0,
+        'NIFTY': 50.0,
+        '^NSEBANK': 15.0,
+        'BANKNIFTY': 15.0,
+        'FINNIFTY': 40.0,
+        'RELIANCE': 250.0,
+        'TCS': 175.0,
+        'INFY': 400.0,
+        'HDFCBANK': 550.0,
+        'ICICIBANK': 700.0,
+        'SBIN': 1500.0,
+        'BHARTIARTL': 950.0,
+        'ITC': 1600.0,
+        'LT': 300.0,
+        'AXISBANK': 625.0,
+        'KOTAKBANK': 400.0,
+        'HINDUNILVR': 300.0,
+        'MARUTI': 100.0,
+        'TATASTEEL': 5500.0,
+        'M&M': 350.0,
+        'LTIM': 150.0,
+        'BAJFINANCE': 125.0,
+        'BAJAJFINSV': 500.0,
+        'SUNPHARMA': 700.0,
+        'ADANIENT': 250.0,
+        'ADANIPORTS': 400.0,
+        'ULTRACEMCO': 100.0,
+        'WIPRO': 1500.0,
+        'HCLTECH': 700.0,
+        'ASIANPAINT': 200.0,
+        'ONGC': 3850.0,
+        'POWERGRID': 3600.0,
+        'NTPC': 3000.0,
+        'COALINDIA': 4200.0,
+        'JIOFIN': 2000.0
+    }
+    
     url = "https://archives.nseindia.com/content/fo/fo_mktlots.csv"
     try:
         req = urllib.request.Request(
@@ -20,8 +58,12 @@ def fetch_fo_lot_sizes() -> dict:
             headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
         )
         with urllib.request.urlopen(req, timeout=10) as response:
+            content_type = response.info().get_content_type()
+            if 'pdf' in content_type.lower():
+                raise ValueError("NSE redirected CSV request to a PDF file")
+                
             csv_data = response.read().decode('latin-1').replace('\x00', '')
-            reader = csv.reader(io.StringIO(csv_data))
+            reader = csv.reader(csv_data.splitlines())
             
             header = next(reader)
             header = [h.strip().upper() for h in header]
@@ -54,9 +96,10 @@ def fetch_fo_lot_sizes() -> dict:
                 logger.info(f"Loaded {len(res)} lot sizes dynamically from NSE F&O lots CSV.")
                 return res
     except Exception as e:
-        logger.error(f"Error fetching NSE F&O lot sizes from CSV: {e}")
+        logger.warning(f"Unable to fetch dynamic NSE F&O lot sizes (falling back to cached local defaults): {e}")
         
-    return {}
+    _cached_lot_sizes = default_lots
+    return _cached_lot_sizes
 
 def get_lot_size(symbol: str, default_lot_size: float = 100.0) -> float:
     # Normalize symbol to uppercase

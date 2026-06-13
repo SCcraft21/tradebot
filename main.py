@@ -760,7 +760,11 @@ def run_stocks_backtest(config):
     hist_data = {}
     cfg_symbols = stocks_cfg.get('symbols', ['SPY', 'QQQ', 'AAPL', 'MSFT'])
     if not cfg_symbols or (len(cfg_symbols) == 1 and cfg_symbols[0].lower() == 'all'):
-        cfg_symbols = ['RELIANCE.NS', 'TCS.NS', 'INFY.NS']
+        cfg_symbols = [
+            'RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS',
+            'SBIN.NS', 'BHARTIARTL.NS', 'ITC.NS', 'LT.NS', 'AXISBANK.NS',
+            'KOTAKBANK.NS', 'HINDUNILVR.NS'
+        ]
     for symbol in cfg_symbols:
         logging.info(f"Downloading historical daily data for {symbol}...")
         hist_data[symbol] = fetcher.fetch_stock_history(symbol, period="2y")

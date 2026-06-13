@@ -219,11 +219,15 @@ class TradingBrain:
 
         # Ensure indicators exist on options df
         if 'rsi' not in df.columns:
-            from ta.momentum import RSIIndicator
-            from ta.trend import EMAIndicator
-            df = df.copy()
-            df['rsi'] = RSIIndicator(close=df['Close'], window=14).rsi()
-            df['ema200'] = EMAIndicator(close=df['Close'], window=200).ema_indicator()
+            try:
+                from ta.momentum import RSIIndicator
+                from ta.trend import EMAIndicator
+                df = df.copy()
+                df['rsi'] = RSIIndicator(close=df['Close'], window=14).rsi()
+                df['ema200'] = EMAIndicator(close=df['Close'], window=200).ema_indicator()
+            except Exception as e:
+                logger.warning(f"Technical analysis libraries not available: {e}")
+                # Continue without RSI/EMA indicators
             tp = (df['High'] + df['Low'] + df['Close']) / 3.0
             tp_vol = tp * df['Volume']
             cum_tp_vol = tp_vol.rolling(window=14).sum()

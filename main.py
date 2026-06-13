@@ -33,11 +33,15 @@ from telegram_control import TelegramController
 from brain import TradingBrain
 
 
-def setup_logging(config):
+def setup_logging(config, is_backtest=False):
     from security_utils import RedactingFormatter
     log_config = config.get('logging', {})
     level = getattr(logging, log_config.get('level', 'INFO').upper(), logging.INFO)
-    file_name = log_config.get('file', 'trading_bot.log')
+    
+    if is_backtest:
+        file_name = 'backtest.log'
+    else:
+        file_name = log_config.get('file', 'trading_bot.log')
     
     credentials = config.get('credentials', {})
     formatter = RedactingFormatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', credentials=credentials)
@@ -53,6 +57,9 @@ def setup_logging(config):
     fh = RotatingFileHandler(file_name, maxBytes=log_config.get('max_bytes', 10485760), backupCount=log_config.get('backup_count', 5), encoding='utf-8')
     fh.setFormatter(formatter)
     root_logger.addHandler(fh)
+    
+    # Silence noisy yfinance fallback warnings
+    logging.getLogger('yfinance').setLevel(logging.ERROR)
 
 def load_config(path='config.yaml'):
     import os
@@ -932,7 +939,7 @@ def main():
         print(f"Failed to load config: {e}")
         return
         
-    setup_logging(config)
+    setup_logging(config, is_backtest=(args.command == 'backtest'))
     try:
         init_db()
     except Exception as e:

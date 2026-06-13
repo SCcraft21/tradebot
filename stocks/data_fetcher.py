@@ -91,8 +91,9 @@ class StockDataFetcher:
     def fetch_option_chain(self, symbol: str, target_dte: int = 40) -> tuple:
         """
         Fetch options chain for the expiration closest to target_dte.
-        Returns: (selected_expiration_str, puts_dataframe, current_stock_price)
+        Returns: (selected_expiration_str, puts_dataframe, calls_dataframe, current_stock_price)
         """
+        S = None
         try:
             ticker = yf.Ticker(symbol)
             
@@ -172,6 +173,10 @@ class StockDataFetcher:
             
         except Exception as e:
             logger.error(f"Error fetching option chain for {symbol}: {e}")
+            if S is None or S <= 0:
+                logger.error(f"Cannot generate synthetic options chain for {symbol} because underlying price is unknown.")
+                return None, pd.DataFrame(), pd.DataFrame(), 0.0
+            
             logger.info("Falling back to synthetic option chain due to exception.")
             try:
                 return self._generate_synthetic_option_chain(symbol, S, target_dte)

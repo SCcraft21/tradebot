@@ -64,7 +64,7 @@ stocks:
   stop_loss_mult: 1.5
   max_option_margin_pct: 0.80
   max_capital_per_spread_pct: 0.15
-  max_active_spreads: 5
+  max_active_spreads: 20
   daily_loss_limit_pct: 0.01
   initial_capital: 20000.0
   lot_size: 50

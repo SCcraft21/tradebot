@@ -71,7 +71,7 @@ class BullPutSpreadStrategy:
         hist = self.fetcher.fetch_stock_history(symbol, period="1y")
         df = self.evaluate_trend_and_indicators(hist)
         if df.empty or len(df) < self.ema_period:
-            logger.warning(f"Not enough data to calculate indicators for {symbol}.")
+            logger.debug(f"Not enough data to calculate indicators for {symbol}.")
             return {}
             
         row = df.iloc[-1]
@@ -225,8 +225,8 @@ class BullPutSpreadStrategy:
                 short_call = calls[calls['strike'] == atm_strike].iloc[0]
                 
                 # Wings
-                long_put_strike = atm_strike - self.spread_width
-                long_call_strike = atm_strike + self.spread_width
+                long_put_strike = atm_strike - width
+                long_call_strike = atm_strike + width
                 
                 long_put = puts[puts['strike'] == long_put_strike]
                 long_call = calls[calls['strike'] == long_call_strike]
@@ -236,7 +236,7 @@ class BullPutSpreadStrategy:
                     lc = long_call.iloc[0]
                     net_credit = (short_put['mid'] + short_call['mid']) - (lp['mid'] + lc['mid'])
                     if net_credit > 0:
-                        max_loss = self.spread_width - net_credit
+                        max_loss = width - net_credit
                         return {
                             'symbol': symbol,
                             'strategy_type': 'IRON_BUTTERFLY',
@@ -250,7 +250,7 @@ class BullPutSpreadStrategy:
                             'short_call_strike': atm_strike,
                             'long_call_strike': long_call_strike,
                             'net_credit': net_credit,
-                            'spread_width': self.spread_width,
+                            'spread_width': width,
                             'max_profit': net_credit,
                             'max_loss': max_loss if max_loss > 0 else 0.05,
                             'return_on_risk': net_credit / max_loss if max_loss > 0 else 0,
@@ -277,8 +277,8 @@ class BullPutSpreadStrategy:
                     sp = sorted_puts.iloc[0]
                     sc = sorted_calls.iloc[0]
                     
-                    lp_strike = sp['strike'] - self.spread_width
-                    lc_strike = sc['strike'] + self.spread_width
+                    lp_strike = sp['strike'] - width
+                    lc_strike = sc['strike'] + width
                     
                     long_put = puts[puts['strike'] == lp_strike]
                     long_call = calls[calls['strike'] == lc_strike]
@@ -288,7 +288,7 @@ class BullPutSpreadStrategy:
                         lc = long_call.iloc[0]
                         net_credit = (sp['mid'] - lp['mid']) + (sc['mid'] - lc['mid'])
                         if net_credit > 0:
-                            max_loss = self.spread_width - net_credit
+                            max_loss = width - net_credit
                             return {
                                 'symbol': symbol,
                                 'strategy_type': 'IRON_CONDOR',
@@ -302,7 +302,7 @@ class BullPutSpreadStrategy:
                                 'short_call_strike': sc['strike'],
                                 'long_call_strike': lc_strike,
                                 'net_credit': net_credit,
-                                'spread_width': self.spread_width,
+                                'spread_width': width,
                                 'max_profit': net_credit,
                                 'max_loss': max_loss if max_loss > 0 else 0.05,
                                 'return_on_risk': net_credit / max_loss if max_loss > 0 else 0,
@@ -419,13 +419,13 @@ class BullPutSpreadStrategy:
             sorted_puts = sorted_puts.sort_values('delta_diff')
             if not sorted_puts.empty:
                 sp = sorted_puts.iloc[0]
-                target_long = sp['strike'] - self.spread_width
+                target_long = sp['strike'] - width
                 lp_df = puts[puts['strike'] == target_long]
                 if not lp_df.empty:
                     lp = lp_df.iloc[0]
                     net_credit = sp['mid'] - lp['mid']
                     if net_credit > 0:
-                        max_loss = self.spread_width - net_credit
+                        max_loss = width - net_credit
                         return {
                             'symbol': symbol,
                             'strategy_type': 'BULL_PUT',
@@ -435,7 +435,7 @@ class BullPutSpreadStrategy:
                             'short_strike': sp['strike'],
                             'long_strike': target_long,
                             'net_credit': net_credit,
-                            'spread_width': self.spread_width,
+                            'spread_width': width,
                             'max_profit': net_credit,
                             'max_loss': max_loss if max_loss > 0 else 0.05,
                             'return_on_risk': net_credit / max_loss if max_loss > 0 else 0,
@@ -454,13 +454,13 @@ class BullPutSpreadStrategy:
             sorted_calls = sorted_calls.sort_values('delta_diff')
             if not sorted_calls.empty:
                 sc = sorted_calls.iloc[0]
-                target_long = sc['strike'] + self.spread_width
+                target_long = sc['strike'] + width
                 lc_df = calls[calls['strike'] == target_long]
                 if not lc_df.empty:
                     lc = lc_df.iloc[0]
                     net_credit = sc['mid'] - lc['mid']
                     if net_credit > 0:
-                        max_loss = self.spread_width - net_credit
+                        max_loss = width - net_credit
                         return {
                             'symbol': symbol,
                             'strategy_type': 'BEAR_CALL',
@@ -470,7 +470,7 @@ class BullPutSpreadStrategy:
                             'short_strike': sc['strike'],
                             'long_strike': target_long,
                             'net_credit': net_credit,
-                            'spread_width': self.spread_width,
+                            'spread_width': width,
                             'max_profit': net_credit,
                             'max_loss': max_loss if max_loss > 0 else 0.05,
                             'return_on_risk': net_credit / max_loss if max_loss > 0 else 0,

@@ -86,9 +86,9 @@ while ($KeepRunning) {
     
     try {
         # Launch bot and wait for it to complete
-        $Process = Start-Process -FilePath ".venv\Scripts\python.exe" -ArgumentList "main.py --mode $Mode trade" -NoNewWindow -PassThru -Wait
+        & ".venv\Scripts\python.exe" main.py --mode $Mode trade
         
-        $ExitCode = $Process.ExitCode
+        $ExitCode = $LastExitCode
         Write-DaemonLog "Trading bot process exited with code: $ExitCode"
         
         if ($ExitCode -eq 0) {

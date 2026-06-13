@@ -12,6 +12,9 @@ if sys.platform.startswith('win'):
 import signal
 import logging
 from logging.handlers import RotatingFileHandler
+import pandas as pd
+
+logger = logging.getLogger(__name__)
 from data import DataFetcher
 from strategy import SwingStrategy
 from execution import Execution

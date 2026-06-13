@@ -21,11 +21,11 @@ class DataFetcher:
             'enableRateLimit': True,
         }
         
-        if not is_placeholder(api_key) and not is_placeholder(api_secret):
+        if not paper and not is_placeholder(api_key) and not is_placeholder(api_secret):
             config['apiKey'] = api_key
             config['secret'] = api_secret
         else:
-            logger.info(f"Using anonymous/public access for exchange '{exchange_id}' as API keys are placeholder or missing.")
+            logger.info(f"Using anonymous/public access for exchange '{exchange_id}' as API keys are placeholder, missing, or paper trading is active.")
             
         self.exchange = exchange_class(config)
         

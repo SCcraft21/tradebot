@@ -33,8 +33,11 @@ class TradingBrain:
         self.api_key = api_key
         self.model = model
         self.veto_power = veto_power
+        self._unauthenticated = False
         
     def _is_api_key_valid(self) -> bool:
+        if self._unauthenticated:
+            return False
         if not self.api_key:
             return False
         # Treat placeholders as invalid
@@ -138,6 +141,10 @@ class TradingBrain:
                     "confidence": confidence,
                     "rationale": rationale
                 }
+            elif response.status_code == 401:
+                logger.error("Gemini API key is unauthenticated (invalid or expired API key). Disabling TradingBrain API queries.")
+                self._unauthenticated = True
+                return fallback
             else:
                 logger.error(f"Gemini API returned error status {response.status_code}: {response.text}")
                 return fallback
@@ -175,6 +182,11 @@ class TradingBrain:
                 res_data = response.json()
                 text_response = res_data['candidates'][0]['content']['parts'][0]['text']
                 return text_response.strip()
+            elif response.status_code == 401:
+                logger.error("Gemini API key is unauthenticated (invalid or expired API key). Disabling TradingBrain API queries.")
+                self._unauthenticated = True
+            else:
+                logger.error(f"Gemini API returned error status {response.status_code}: {response.text}")
         except Exception as e:
             logger.error(f"Error generating trade explanation: {e}")
             
@@ -336,6 +348,10 @@ class TradingBrain:
                     "confidence": confidence,
                     "rationale": rationale
                 }
+            elif response.status_code == 401:
+                logger.error("Gemini API key is unauthenticated (invalid or expired API key). Disabling TradingBrain API queries.")
+                self._unauthenticated = True
+                return fallback
             else:
                 logger.error(f"Gemini API returned error status {response.status_code}: {response.text}")
                 return fallback
@@ -378,6 +394,11 @@ class TradingBrain:
                 res_data = response.json()
                 text_response = res_data['candidates'][0]['content']['parts'][0]['text']
                 return text_response.strip()
+            elif response.status_code == 401:
+                logger.error("Gemini API key is unauthenticated (invalid or expired API key). Disabling TradingBrain API queries.")
+                self._unauthenticated = True
+            else:
+                logger.error(f"Gemini API returned error status {response.status_code}: {response.text}")
         except Exception as e:
             logger.error(f"Error generating options trade explanation: {e}")
             

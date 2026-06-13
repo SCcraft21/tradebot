@@ -754,7 +754,8 @@ def run_stocks_backtest(config):
         initial_capital=stocks_cfg.get('initial_capital', 1000000.0),
         lot_size=stocks_cfg.get('lot_size', 100.0),
         base_lots=stocks_cfg.get('base_lots', 5),
-        sized_down_lots=stocks_cfg.get('sized_down_lots', 1)
+        sized_down_lots=stocks_cfg.get('sized_down_lots', 1),
+        adaptive_sizing=stocks_cfg.get('adaptive_sizing', True)
     )
     
     hist_data = {}

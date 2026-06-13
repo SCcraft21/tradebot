@@ -245,38 +245,48 @@ class OptionsRiskManager:
         """
         Calculate contracts based on cost_per_contract (which is spread_width for credit spreads,
         or option premium for buying single options).
+        Sizing is dynamically determined from account equity (total_balance) and limited to 80%.
         """
+        lot_size = get_lot_size(symbol, self.lot_size)
+        one_contract_margin = cost_per_contract * lot_size
+        if one_contract_margin <= 0:
+            return 0
+            
+        available_margin = total_balance - self.current_collateral
+        max_allowed_margin = total_balance * 0.80
+        
+        # Calculate dynamic base lots committing up to 80% of total_balance
+        base_dynamic_lots = int(max_allowed_margin // one_contract_margin)
+        
+        # Calculate sized down lots scaled by sized_down_lots / base_lots
+        size_down_factor = float(self.sized_down_lots) / float(self.base_lots) if self.base_lots > 0 else 0.20
+        sized_down_dynamic_lots = int((total_balance * 0.80 * size_down_factor) // one_contract_margin)
+        if sized_down_dynamic_lots == 0 and total_balance >= one_contract_margin:
+            sized_down_dynamic_lots = 1
+            
+        target_lots = base_dynamic_lots
+        
         if self.adaptive_sizing:
             from db import load_closed_trades_history
             history = load_closed_trades_history(limit=1)
-            target_lots = self.base_lots
             if history:
                 last_trade = history[0]
                 if last_trade.get('pnl', 0.0) < 0:
-                    target_lots = self.sized_down_lots
-                    logger.info(f"Stocks Options: Last trade was a LOSS (PnL: {last_trade['pnl']:.2f}). Sizing down to {target_lots} lots.")
+                    target_lots = sized_down_dynamic_lots
+                    logger.info(f"Stocks Options: Last trade was a LOSS (PnL: {last_trade['pnl']:.2f}). Sizing down to {target_lots} contracts.")
                 else:
-                    logger.info(f"Stocks Options: Last trade was a WIN/TIE (PnL: {last_trade.get('pnl', 0.0):.2f}). Using base {target_lots} lots.")
+                    logger.info(f"Stocks Options: Last trade was a WIN/TIE (PnL: {last_trade.get('pnl', 0.0):.2f}). Using base {target_lots} contracts.")
             else:
-                logger.info("Stocks Options: No trade history. Using base 5 lots.")
+                logger.info(f"Stocks Options: No trade history. Using base {target_lots} contracts.")
         else:
-            lot_size = get_lot_size(symbol, self.lot_size)
-            available_margin = total_balance - self.current_collateral
-            max_margin_per_trade = total_balance * self.max_capital_per_spread_pct
-            one_contract_margin = cost_per_contract * lot_size
-            if one_contract_margin <= 0 or available_margin < one_contract_margin:
-                return 0
-            limit_margin = min(max_margin_per_trade, available_margin)
-            return int(limit_margin // one_contract_margin)
-
-        lot_size = get_lot_size(symbol, self.lot_size)
-        one_contract_margin = cost_per_contract * lot_size
-        required_margin = target_lots * one_contract_margin
-        available_margin = total_balance - self.current_collateral
-        
-        if required_margin > available_margin:
+            # If adaptive sizing is disabled, use max_capital_per_spread_pct (which is limited to max 80%)
+            margin_limit = min(total_balance * self.max_capital_per_spread_pct, max_allowed_margin)
+            target_lots = int(margin_limit // one_contract_margin)
+            
+        # Ensure target_lots does not exceed available margin/capital
+        if target_lots * one_contract_margin > available_margin:
             max_possible = int(available_margin // one_contract_margin)
-            logger.warning(f"Required margin/capital ₹{required_margin:.2f} for {target_lots} contracts exceeds available margin/capital ₹{available_margin:.2f}. Scaling down to {max_possible} contracts.")
+            logger.warning(f"Required margin/capital Rs.{target_lots * one_contract_margin:.2f} exceeds available margin Rs.{available_margin:.2f}. Scaling down to {max_possible} contracts.")
             return max_possible
             
         return target_lots

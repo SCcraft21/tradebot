@@ -19,9 +19,9 @@ strategy:
 
 risk:
   take_profit_pct: 0.05
-  stop_loss_pct: 0.025
+  stop_loss_pct: 0.01
   max_capital_per_trade_pct: 0.15 # Max 15% per trade
-  daily_loss_limit_pct: 0.10
+  daily_loss_limit_pct: 0.02
   max_open_trades: 2
   tp_atr_mult: 3.0
   sl_atr_mult: 1.5
@@ -59,11 +59,11 @@ stocks:
   min_iv_rank: 15.0
   ema_period: 200
   profit_target_pct: 0.40
-  stop_loss_mult: 2.0
+  stop_loss_mult: 1.5
   max_option_margin_pct: 0.95
   max_capital_per_spread_pct: 0.15
   max_active_spreads: 5
-  daily_loss_limit_pct: 0.05
+  daily_loss_limit_pct: 0.01
   initial_capital: 500000.0
   lot_size: 50
   adaptive_sizing: true

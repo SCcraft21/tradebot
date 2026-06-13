@@ -380,7 +380,56 @@ class TradingBotEngine:
                     spread['current_dte'] = spread.get('dte', 30)
                 
                 # We calculate current_spread_val and current_dte
-                if strat == 'BULL_PUT':
+                if strat in ('MOMENTUM_CALL_BUY', 'ORB_CALL_BUY'):
+                    opt = calls[calls['strike'] == spread['long_strike']]
+                    if not opt.empty:
+                        current_spread_val = opt.iloc[0]['mid']
+                        spread['current_dte'] = int(opt.iloc[0]['dte'])
+                    else:
+                        current_spread_val = max(0.0, abs(spread['net_credit']) * (spread['current_dte'] / spread['dte']))
+                        spread['current_dte'] = max(0, spread['current_dte'] - 1)
+                        
+                elif strat in ('MOMENTUM_PUT_BUY', 'ORB_PUT_BUY'):
+                    opt = puts[puts['strike'] == spread['long_strike']]
+                    if not opt.empty:
+                        current_spread_val = opt.iloc[0]['mid']
+                        spread['current_dte'] = int(opt.iloc[0]['dte'])
+                    else:
+                        current_spread_val = max(0.0, abs(spread['net_credit']) * (spread['current_dte'] / spread['dte']))
+                        spread['current_dte'] = max(0, spread['current_dte'] - 1)
+                        
+                elif strat == 'CASH_SECURED_PUT':
+                    opt = puts[puts['strike'] == spread['short_strike']]
+                    if not opt.empty:
+                        current_spread_val = opt.iloc[0]['mid']
+                        spread['current_dte'] = int(opt.iloc[0]['dte'])
+                    else:
+                        current_spread_val = max(0.0, spread['net_credit'] * (spread['current_dte'] / spread['dte']))
+                        spread['current_dte'] = max(0, spread['current_dte'] - 1)
+                        
+                elif strat == 'COVERED_CALL':
+                    opt = calls[calls['strike'] == spread['short_strike']]
+                    if not opt.empty:
+                        current_spread_val = current_price - opt.iloc[0]['mid']
+                        spread['current_dte'] = int(opt.iloc[0]['dte'])
+                    else:
+                        current_spread_val = current_price - max(0.0, spread['net_credit'] * (spread['current_dte'] / spread['dte']))
+                        spread['current_dte'] = max(0, spread['current_dte'] - 1)
+                        
+                elif strat == 'CALENDAR_SPREAD':
+                    short_opt = calls[calls['strike'] == spread['short_strike']]
+                    if not short_opt.empty:
+                        near_val = short_opt.iloc[0]['mid']
+                        T_long = (spread['current_dte'] + 30) / 365.0
+                        sigma = short_opt.iloc[0].get('impliedVolatility', 0.25)
+                        long_val = self.stocks_execution._bs_call_price(current_price, spread['short_strike'], T_long, sigma)
+                        current_spread_val = long_val - near_val
+                        spread['current_dte'] = int(short_opt.iloc[0]['dte'])
+                    else:
+                        current_spread_val = max(0.0, abs(spread['net_credit']) * (spread['current_dte'] / spread['dte']))
+                        spread['current_dte'] = max(0, spread['current_dte'] - 1)
+                        
+                elif strat == 'BULL_PUT':
                     short_opt = puts[puts['strike'] == spread['short_strike']]
                     long_opt = puts[puts['strike'] == spread['long_strike']]
                     if not short_opt.empty and not long_opt.empty:
@@ -402,11 +451,26 @@ class TradingBotEngine:
                         current_spread_val = max(0.0, min(spread['spread_width'], spread['net_credit'] - (dist * 0.1)))
                         spread['current_dte'] = max(0, spread['current_dte'] - 1)
                         
-                else:  # IRON_CONDOR
+                elif strat == 'IRON_BUTTERFLY':
                     short_put = puts[puts['strike'] == spread['short_put_strike']]
                     long_put = puts[puts['strike'] == spread['long_put_strike']]
                     short_call = calls[calls['strike'] == spread['short_call_strike']]
                     long_call = calls[calls['strike'] == spread['long_call_strike']]
+                    
+                    if not short_put.empty and not long_put.empty and not short_call.empty and not long_call.empty:
+                        put_val = short_put.iloc[0]['mid'] - long_put.iloc[0]['mid']
+                        call_val = short_call.iloc[0]['mid'] - long_call.iloc[0]['mid']
+                        current_spread_val = put_val + call_val
+                        spread['current_dte'] = int(short_put.iloc[0]['dte'])
+                    else:
+                        current_spread_val = max(0.0, spread['net_credit'] * (spread['current_dte'] / spread['dte']))
+                        spread['current_dte'] = max(0, spread['current_dte'] - 1)
+                        
+                else:  # IRON_CONDOR
+                    short_put = puts[puts['strike'] == spread.get('short_put_strike', 0.0)]
+                    long_put = puts[puts['strike'] == spread.get('long_put_strike', 0.0)]
+                    short_call = calls[calls['strike'] == spread.get('short_call_strike', 0.0)]
+                    long_call = calls[calls['strike'] == spread.get('long_call_strike', 0.0)]
                     
                     if not short_put.empty and not long_put.empty and not short_call.empty and not long_call.empty:
                         put_val = short_put.iloc[0]['mid'] - long_put.iloc[0]['mid']

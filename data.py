@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class DataFetcher:
-    def __init__(self, exchange_id: str, api_key: str, api_secret: str, paper: bool = True, demo_trading: bool = False):
+    def __init__(self, exchange_id: str, api_key: str, api_secret: str, paper: bool = True, demo_trading: bool = False, api_url: str = None):
         exchange_class = getattr(ccxt, exchange_id)
         
         is_placeholder = lambda val: (
@@ -20,6 +20,18 @@ class DataFetcher:
         config = {
             'enableRateLimit': True,
         }
+        
+        if api_url:
+            config['urls'] = {
+                'api': {
+                    'public': api_url,
+                    'private': api_url,
+                    'futures': api_url,
+                    'spot': api_url,
+                    'v2': api_url,
+                }
+            }
+            logger.info(f"Routing '{exchange_id}' API requests through custom URL: {api_url}")
         
         if not paper and not is_placeholder(api_key) and not is_placeholder(api_secret):
             config['apiKey'] = api_key

@@ -91,7 +91,8 @@ class TradingBotEngine:
             config['credentials']['api_key'], 
             config['credentials']['api_secret'], 
             paper=self.is_paper,
-            demo_trading=demo_trading
+            demo_trading=demo_trading,
+            api_url=config.get('trading', {}).get('api_url')
         )
         strat_cfg = config.get('strategy', {})
         self.crypto_strategy = SwingStrategy(
@@ -678,7 +679,7 @@ def run_backtest(config):
     strat_cfg = config.get('strategy', {})
     risk_cfg = config.get('risk', {})
     
-    fetcher = DataFetcher(trade_cfg.get('exchange', 'bybit'), '', '', paper=True)
+    fetcher = DataFetcher(trade_cfg.get('exchange', 'bybit'), '', '', paper=True, api_url=trade_cfg.get('api_url'))
     strategy = SwingStrategy(
         strat_cfg.get('rsi_period', 14), 
         strat_cfg.get('rsi_oversold', 35.0), 

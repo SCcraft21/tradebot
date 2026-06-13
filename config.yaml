@@ -7,7 +7,7 @@ trading:
   demo_trading: true
   backtest_limit: 5000
   initial_capital: 100.0
-  api_url: "https://api.bytick.com"
+  api_url: "https://api.bybit.com"
 
 strategy:
   rsi_period: 14

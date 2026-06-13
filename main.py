@@ -168,11 +168,11 @@ class TradingBotEngine:
         
         # Set Initial Balances
         try:
-            self.crypto_balance = 10000.0 if self.is_paper else self.crypto_fetcher.exchange.fetch_balance()['total'].get('USDT', 0.0)
+            self.crypto_balance = config.get('trading', {}).get('initial_capital', 100.0) if self.is_paper else self.crypto_fetcher.exchange.fetch_balance()['total'].get('USDT', 0.0)
             self.crypto_risk.set_initial_balance(self.crypto_balance)
         except Exception as e:
             logging.error(f"Failed crypto balance fetch: {e}")
-            self.crypto_balance = 10000.0
+            self.crypto_balance = config.get('trading', {}).get('initial_capital', 100.0)
             self.crypto_risk.set_initial_balance(self.crypto_balance)
             
         self.stocks_balance = stocks_cfg.get('initial_capital', 1000000.0)
@@ -712,7 +712,7 @@ def run_backtest(config):
         logging.info(f"Downloading historicals for {symbol}...")
         hist_data[symbol] = fetcher.fetch_ohlcv(symbol, trade_cfg.get('timeframe', '15m'), limit=backtest_limit)
         
-    backtester = Backtester(strategy, risk)
+    backtester = Backtester(strategy, risk, initial_capital=trade_cfg.get('initial_capital', 100.0))
     results = backtester.run(hist_data)
     
     print("\n--- Backtest Output ---")

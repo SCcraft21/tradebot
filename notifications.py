@@ -21,6 +21,7 @@ class Notifier:
         logger.info(redacted_msg)
         self._send_telegram(redacted_msg)
         self._send_discord(redacted_msg)
+        self._send_whatsapp(redacted_msg)
 
     def _send_telegram(self, message: str):
         if not self.telegram_token or not self.telegram_chat_id: return
@@ -36,3 +37,31 @@ class Notifier:
             requests.post(self.discord_webhook, json={"content": message}, timeout=5)
         except Exception as e:
             logger.error(f"Discord failed: {e}")
+
+    def _send_whatsapp(self, message: str):
+        sid = self.credentials.get('whatsapp_twilio_sid')
+        token = self.credentials.get('whatsapp_twilio_token')
+        sender = self.credentials.get('whatsapp_sender_number')
+        admin = self.credentials.get('whatsapp_admin_number')
+
+        if not sid or not token or not sender or not admin:
+            return
+
+        sender_num = sender.strip()
+        if not sender_num.startswith("whatsapp:"):
+            sender_num = f"whatsapp:{sender_num}"
+
+        admin_num = admin.strip()
+        if not admin_num.startswith("whatsapp:"):
+            admin_num = f"whatsapp:{admin_num}"
+
+        try:
+            url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+            payload = {
+                "From": sender_num,
+                "To": admin_num,
+                "Body": message
+            }
+            requests.post(url, data=payload, auth=(sid, token), timeout=10)
+        except Exception as e:
+            logger.error(f"WhatsApp notification failed: {e}")

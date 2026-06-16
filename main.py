@@ -32,6 +32,8 @@ from stocks.backtest import StocksOptionsBacktester
 from telegram_control import TelegramController
 from brain import TradingBrain
 
+_active_engine = None
+
 
 def setup_logging(config, is_backtest=False):
     from security_utils import RedactingFormatter
@@ -95,6 +97,10 @@ def load_config(path='config.yaml'):
         'DISCORD_WEBHOOK': 'discord_webhook',
         'DHAN_CLIENT_ID': 'dhan_client_id',
         'DHAN_ACCESS_TOKEN': 'dhan_access_token',
+        'WHATSAPP_TWILIO_SID': 'whatsapp_twilio_sid',
+        'WHATSAPP_TWILIO_TOKEN': 'whatsapp_twilio_token',
+        'WHATSAPP_SENDER_NUMBER': 'whatsapp_sender_number',
+        'WHATSAPP_ADMIN_NUMBER': 'whatsapp_admin_number',
     }
     for env_key, config_key in env_mappings.items():
         val = os.environ.get(env_key)
@@ -105,6 +111,9 @@ def load_config(path='config.yaml'):
 
 class TradingBotEngine:
     def __init__(self, config, asset_mode='crypto'):
+        global _active_engine
+        _active_engine = self
+        
         self.config = config
         self.asset_mode = asset_mode
         self.trading_active = True
@@ -208,6 +217,16 @@ class TradingBotEngine:
         self.telegram = TelegramController(
             token=config['credentials'].get('telegram_token'),
             chat_id=config['credentials'].get('telegram_chat_id'),
+            engine=self
+        )
+        
+        # WhatsApp Controller
+        from whatsapp_control import WhatsAppController
+        self.whatsapp = WhatsAppController(
+            twilio_sid=config['credentials'].get('whatsapp_twilio_sid'),
+            twilio_token=config['credentials'].get('whatsapp_twilio_token'),
+            sender_number=config['credentials'].get('whatsapp_sender_number'),
+            admin_number=config['credentials'].get('whatsapp_admin_number'),
             engine=self
         )
         
@@ -1000,6 +1019,35 @@ def start_health_server():
                 self.send_header('Content-type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(b"OK")
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self):
+            if self.path == '/whatsapp':
+                content_length = int(self.headers.get('Content-Length', 0))
+                post_data = self.rfile.read(content_length).decode('utf-8')
+                
+                from urllib.parse import parse_qs
+                params = parse_qs(post_data)
+                
+                from_num = params.get('From', [''])[0]
+                body_text = params.get('Body', [''])[0]
+                
+                logger.info(f"Incoming WhatsApp webhook request from {from_num} with body: {body_text}")
+                
+                global _active_engine
+                if _active_engine and hasattr(_active_engine, 'whatsapp'):
+                    success = _active_engine.whatsapp.process_message(from_num, body_text)
+                    if success:
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/xml')
+                        self.end_headers()
+                        self.wfile.write(b"<Response></Response>")
+                        return
+                
+                self.send_response(400)
+                self.end_headers()
             else:
                 self.send_response(404)
                 self.end_headers()

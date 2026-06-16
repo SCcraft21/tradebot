@@ -51,6 +51,10 @@ credentials:
   discord_webhook: ""
   dhan_client_id: "YOUR_DHAN_CLIENT_ID"
   dhan_access_token: "YOUR_DHAN_ACCESS_TOKEN"
+  whatsapp_twilio_sid: "YOUR_TWILIO_SID"
+  whatsapp_twilio_token: "YOUR_TWILIO_TOKEN"
+  whatsapp_sender_number: "whatsapp:+14155238886"
+  whatsapp_admin_number: "whatsapp:YOUR_ADMIN_NUMBER"
 
 logging:
   level: INFO

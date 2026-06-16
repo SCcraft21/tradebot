@@ -143,6 +143,52 @@ def get_lot_size(symbol: str, default_lot_size: float = 100.0) -> float:
             
     return default_lot_size
 
+def calculate_bs_greeks(S: float, K: float, T: float, sigma: float, option_type: str, r: float = 0.045) -> dict:
+    """
+    Calculate Black-Scholes Option Greeks (Delta, Gamma, Theta, Vega).
+    T is in years, sigma is in decimals, r is in decimals.
+    """
+    import math
+    if S <= 0 or K <= 0:
+        return {'delta': 0.0, 'gamma': 0.0, 'theta': 0.0, 'vega': 0.0}
+    if T <= 0:
+        if option_type.lower() == 'call':
+            delta = 1.0 if S > K else 0.0
+        else:
+            delta = -1.0 if S < K else 0.0
+        return {'delta': delta, 'gamma': 0.0, 'theta': 0.0, 'vega': 0.0}
+        
+    if sigma <= 0:
+        sigma = 0.01
+        
+    d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    
+    def N(x):
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+        
+    def n(x):
+        return (1.0 / math.sqrt(2.0 * math.pi)) * math.exp(-0.5 * x**2)
+        
+    n_d1 = n(d1)
+    
+    gamma = n_d1 / (S * sigma * math.sqrt(T))
+    vega = (S * math.sqrt(T) * n_d1) / 100.0
+    
+    if option_type.lower() == 'call':
+        delta = N(d1)
+        theta = (- (S * n_d1 * sigma) / (2.0 * math.sqrt(T)) - r * K * math.exp(-r * T) * N(d2)) / 365.0
+    else:
+        delta = N(d1) - 1.0
+        theta = (- (S * n_d1 * sigma) / (2.0 * math.sqrt(T)) + r * K * math.exp(-r * T) * N(-d2)) / 365.0
+        
+    return {
+        'delta': delta,
+        'gamma': gamma,
+        'theta': theta,
+        'vega': vega
+    }
+
 class OptionsRiskManager:
     def __init__(self, max_option_margin_pct: float = 0.50, max_capital_per_spread_pct: float = 0.15,
                  max_active_spreads: int = 3, daily_loss_limit_pct: float = 0.05, lot_size: float = 100.0,
@@ -290,3 +336,136 @@ class OptionsRiskManager:
             return max_possible
             
         return target_lots
+
+    def calculate_portfolio_greeks(self, data_fetcher, index_symbol: str = "^NSEI") -> dict:
+        """
+        Calculate portfolio-level Greeks (Delta, Gamma, Theta, Vega) and Beta-Weighted Delta.
+        Returns a dictionary with the aggregate Greeks.
+        """
+        import pandas as pd
+        import numpy as np
+        
+        total_delta = 0.0
+        total_gamma = 0.0
+        total_theta = 0.0
+        total_vega = 0.0
+        total_beta_delta = 0.0
+        
+        index_price = 1.0
+        try:
+            idx_df = data_fetcher.fetch_stock_history(index_symbol, period="5d")
+            if not idx_df.empty:
+                idx_df = idx_df.dropna(subset=['Close'])
+                if not idx_df.empty:
+                    index_price = float(idx_df['Close'].iloc[-1])
+        except Exception as e:
+            logger.warning(f"Failed to fetch index price for {index_symbol}: {e}")
+            
+        if index_price <= 0:
+            index_price = 1.0
+            
+        logger.info(f"Calculating portfolio Greeks with reference index {index_symbol} price: {index_price:.2f}")
+        
+        portfolio_details = []
+        
+        for symbol, spread in self.open_spreads.items():
+            try:
+                contracts = spread.get('contracts', 1)
+                lot_size = spread.get('lot_size', 100.0)
+                dte = spread.get('dte', 30)
+                T = dte / 365.0
+                
+                stock_price = 0.0
+                stock_df = data_fetcher.fetch_stock_history(symbol, period="5d")
+                if not stock_df.empty:
+                    stock_df = stock_df.dropna(subset=['Close'])
+                    if not stock_df.empty:
+                        stock_price = float(stock_df['Close'].iloc[-1])
+                        
+                if stock_price <= 0:
+                    stock_price = float(spread.get('underlying_price', 0.0))
+                    
+                if stock_price <= 0:
+                    logger.warning(f"Unable to find price for {symbol}, skipping Greeks.")
+                    continue
+                    
+                beta = data_fetcher.calculate_stock_beta(symbol, index_symbol)
+                
+                stock_hist = data_fetcher.fetch_stock_history(symbol, period="1y")
+                sigma = data_fetcher.calculate_historical_volatility(stock_hist)
+                
+                spread_delta = 0.0
+                spread_gamma = 0.0
+                spread_theta = 0.0
+                spread_vega = 0.0
+                
+                legs = spread.get('legs', [])
+                for leg in legs:
+                    action = leg.get('action', 'BUY').upper()
+                    opt_type = leg.get('type', 'PUT').upper()
+                    strike = float(leg.get('strike', 0.0))
+                    
+                    if strike <= 0:
+                        if opt_type == 'STOCK' or leg.get('type') == 'STOCK':
+                            coeff = 1.0 if action == 'BUY' else -1.0
+                            leg_delta = coeff
+                            spread_delta += leg_delta
+                        continue
+                        
+                    greeks = calculate_bs_greeks(
+                        S=stock_price,
+                        K=strike,
+                        T=T,
+                        sigma=sigma,
+                        option_type='call' if opt_type == 'CALL' else 'put',
+                        r=data_fetcher.risk_free_rate
+                    )
+                    
+                    coeff = 1.0 if action == 'BUY' else -1.0
+                    
+                    spread_delta += greeks['delta'] * coeff
+                    spread_gamma += greeks['gamma'] * coeff
+                    spread_theta += greeks['theta'] * coeff
+                    spread_vega += greeks['vega'] * coeff
+                    
+                position_multiplier = contracts * lot_size
+                pos_delta = spread_delta * position_multiplier
+                pos_gamma = spread_gamma * position_multiplier
+                pos_theta = spread_theta * position_multiplier
+                pos_vega = spread_vega * position_multiplier
+                
+                pos_beta_delta = pos_delta * beta * (stock_price / index_price)
+                
+                total_delta += pos_delta
+                total_gamma += pos_gamma
+                total_theta += pos_theta
+                total_vega += pos_vega
+                total_beta_delta += pos_beta_delta
+                
+                portfolio_details.append({
+                    'symbol': symbol,
+                    'strategy': spread.get('strategy_type', 'BULL_PUT'),
+                    'contracts': contracts,
+                    'delta': pos_delta,
+                    'gamma': pos_gamma,
+                    'theta': pos_theta,
+                    'vega': pos_vega,
+                    'beta_delta': pos_beta_delta,
+                    'beta': beta
+                })
+                
+            except Exception as e:
+                logger.error(f"Error calculating Greeks for spread {symbol}: {e}")
+                
+        return {
+            'aggregate': {
+                'delta': total_delta,
+                'gamma': total_gamma,
+                'theta': total_theta,
+                'vega': total_vega,
+                'beta_weighted_delta': total_beta_delta
+            },
+            'details': portfolio_details,
+            'index_price': index_price
+        }
+

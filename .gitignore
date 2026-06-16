@@ -9,3 +9,5 @@ __pycache__/
 .env
 config.yaml
 config_testnet.yaml
+stocks/dhan_scrip_master.csv
+scratch/

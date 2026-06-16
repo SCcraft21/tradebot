@@ -36,7 +36,7 @@ risk:
 
 brain:
   enabled: true
-  model: "gemini-1.5-flash"
+  model: "gemini-2.0-flash"
   veto_power: true
 
 # Credentials are loaded from environment variables or .env file.
@@ -77,3 +77,8 @@ stocks:
   adaptive_sizing: true
   base_lots: 10
   sized_down_lots: 1
+  delta_hedging:
+    enabled: true
+    threshold: 100.0
+    index_symbol: "^NSEI"
+    alert_interval_seconds: 300

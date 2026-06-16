@@ -8,8 +8,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 class StockDataFetcher:
-    def __init__(self, risk_free_rate: float = 0.045):
+    def __init__(self, risk_free_rate: float = 0.045, dhan_client=None):
         self.risk_free_rate = risk_free_rate
+        self.dhan_client = dhan_client
 
     def fetch_stock_history(self, symbol: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
         """Fetch stock historical price data using yfinance."""
@@ -47,28 +48,66 @@ class StockDataFetcher:
         latest_vol = vol.iloc[-1]
         return latest_vol if not pd.isna(latest_vol) else 0.15
 
+    def get_stock_historical_volatility(self, symbol: str) -> float:
+        """Fetch 1-year stock history and calculate latest historical volatility."""
+        df = self.fetch_stock_history(symbol, period="1y")
+        return self.calculate_historical_volatility(df)
+
+    def fetch_india_vix_level(self) -> float:
+        """Fetch current India VIX level as a percentage (e.g. 15.4 means 15.4%)."""
+        try:
+            vix_df = self.fetch_stock_history("^INDIAVIX", period="5d")
+            if not vix_df.empty:
+                return float(vix_df['Close'].iloc[-1])
+            return 15.0 # Fallback VIX
+        except Exception as e:
+            logger.error(f"Error fetching India VIX: {e}")
+            return 15.0
+
+    def calculate_india_vix_iv_rank(self) -> float:
+        """Calculate 1-year IV Rank of India VIX itself."""
+        try:
+            df = self.fetch_stock_history("^INDIAVIX", period="1y")
+            if df.empty or len(df) < 50:
+                return 50.0
+            current_vix = df['Close'].iloc[-1]
+            min_vix = df['Close'].min()
+            max_vix = df['Close'].max()
+            if max_vix == min_vix:
+                return 50.0
+            rank = ((current_vix - min_vix) / (max_vix - min_vix)) * 100.0
+            return float(np.clip(rank, 0.0, 100.0))
+        except Exception as e:
+            logger.error(f"Error calculating India VIX IV Rank: {e}")
+            return 50.0
+
     def calculate_iv_rank(self, df: pd.DataFrame, current_iv: float) -> float:
         """
         Estimate IV Rank comparing current IV to the 1-year Historical Volatility range.
-        Since yfinance does not provide historical options IV series, we use historical volatility
-        as a proxy to determine if volatility is high or low.
+        If current_iv is None/invalid or df is empty/too short, fall back to India VIX IV Rank.
         """
+        if current_iv is not None and current_iv > 1.0:
+            current_iv = current_iv / 100.0
+
+        if current_iv is None or current_iv <= 0 or df.empty or len(df) < 20:
+            return self.calculate_india_vix_iv_rank()
+
         if len(df) < 252:
-            return 50.0  # Fallback to middle rank
-        
+            return self.calculate_india_vix_iv_rank()
+
         log_returns = np.log(df['Close'] / df['Close'].shift(1))
         rolling_vols = log_returns.rolling(window=20).std() * math.sqrt(252)
         rolling_vols = rolling_vols.dropna()
-        
+
         if rolling_vols.empty:
-            return 50.0
-            
+            return self.calculate_india_vix_iv_rank()
+
         min_vol = rolling_vols.min()
         max_vol = rolling_vols.max()
-        
+
         if max_vol == min_vol:
             return 50.0
-            
+
         iv_rank = ((current_iv - min_vol) / (max_vol - min_vol)) * 100.0
         return float(np.clip(iv_rank, 0.0, 100.0))
 
@@ -94,24 +133,147 @@ class StockDataFetcher:
         Returns: (selected_expiration_str, puts_dataframe, calls_dataframe, current_stock_price)
         """
         S = None
+        # Always try to fetch current stock price from yfinance first as a baseline
         try:
             ticker = yf.Ticker(symbol)
-            
-            # Fetch current price (using latest valid closing price from history)
             history = ticker.history(period="5d")
             if not history.empty:
                 history = history.dropna(subset=['Close'])
-            if history.empty:
-                logger.error(f"Cannot fetch stock price for {symbol}.")
-                return None, pd.DataFrame(), pd.DataFrame(), 0.0
-            S = history['Close'].iloc[-1]
+                if not history.empty:
+                    S = float(history['Close'].iloc[-1])
+        except Exception as e:
+            logger.debug(f"Failed to fetch baseline stock price via yfinance: {e}")
+
+        # Check if live DhanClient is available with valid credentials
+        if self.dhan_client and self.dhan_client._has_valid_credentials():
+            logger.info(f"Dhan API: Fetching live option chain for {symbol}...")
+            try:
+                underlying_symbol = symbol.split('.')[0].upper()
+                expirations = self.dhan_client.get_expiry_dates(symbol)
+                
+                if expirations:
+                    today = datetime.date.today()
+                    closest_expiration = None
+                    min_dte_diff = 9999
+                    selected_dte = 0
+                    
+                    for exp_str in expirations:
+                        exp_date = datetime.datetime.strptime(exp_str, "%Y-%m-%d").date()
+                        dte = (exp_date - today).days
+                        if dte <= 5:  # Skip options expiring in less than 5 days
+                            continue
+                        diff = abs(dte - target_dte)
+                        if diff < min_dte_diff:
+                            min_dte_diff = diff
+                            closest_expiration = exp_str
+                            selected_dte = dte
+                            
+                    if closest_expiration:
+                        res = self.dhan_client.get_live_option_chain_data(underlying_symbol, closest_expiration)
+                        if res and 'data' in res and 'oc' in res['data']:
+                            data = res['data']
+                            dhan_ltp = data.get('last_price', 0.0)
+                            if dhan_ltp > 0:
+                                S = float(dhan_ltp)
+                                
+                            oc = data.get('oc', {})
+                            puts_list = []
+                            calls_list = []
+                            T = selected_dte / 365.0
+                            
+                            for strike_str, strike_data in oc.items():
+                                try:
+                                    strike_val = float(strike_str)
+                                except ValueError:
+                                    continue
+                                    
+                                for opt_type in ['ce', 'pe']:
+                                    opt_info = strike_data.get(opt_type)
+                                    if not opt_info:
+                                        continue
+                                    
+                                    ltp = float(opt_info.get('last_price', 0.0))
+                                    bid = float(opt_info.get('top_bid_price', 0.0))
+                                    if not bid or bid <= 0:
+                                        bid = float(opt_info.get('bid', 0.0))
+                                    if not bid or bid <= 0:
+                                        bid = ltp
+                                        
+                                    ask = float(opt_info.get('top_ask_price', 0.0))
+                                    if not ask or ask <= 0:
+                                        ask = float(opt_info.get('ask', 0.0))
+                                    if not ask or ask <= 0:
+                                        ask = ltp
+                                        
+                                    mid = (bid + ask) / 2.0 if bid > 0 and ask > 0 else ltp
+                                    
+                                    iv = float(opt_info.get('implied_volatility', 0.0))
+                                    if iv > 1.0:
+                                        iv = iv / 100.0
+                                    if iv <= 0 or pd.isna(iv):
+                                        iv = 0.25
+                                        
+                                    greeks = opt_info.get('greeks', {})
+                                    delta = float(greeks.get('delta', 0.0))
+                                    
+                                    if not delta:
+                                        delta = self.calculate_option_delta(S, strike_val, T, iv, 'put' if opt_type == 'pe' else 'call')
+                                    else:
+                                        if opt_type == 'pe' and delta > 0:
+                                            delta = -delta
+                                        elif opt_type == 'ce' and delta < 0:
+                                            delta = -delta
+                                            
+                                    contract_symbol = opt_info.get('security_id', f"DHAN-{underlying_symbol}-{strike_val}-{opt_type.upper()}")
+                                    
+                                    row_data = {
+                                        'strike': strike_val,
+                                        'bid': bid,
+                                        'ask': ask,
+                                        'mid': mid,
+                                        'impliedVolatility': iv,
+                                        'dte': selected_dte,
+                                        'underlying_price': S,
+                                        'delta': delta,
+                                        'contractSymbol': str(contract_symbol)
+                                    }
+                                    
+                                    if opt_type == 'pe':
+                                        puts_list.append(row_data)
+                                    else:
+                                        calls_list.append(row_data)
+                                        
+                            puts_df = pd.DataFrame(puts_list)
+                            calls_df = pd.DataFrame(calls_list)
+                            
+                            if not puts_df.empty:
+                                puts_df = puts_df[(puts_df['bid'] > 0) & (puts_df['ask'] > 0)]
+                            if not calls_df.empty:
+                                calls_df = calls_df[(calls_df['bid'] > 0) & (calls_df['ask'] > 0)]
+                                
+                            if not puts_df.empty or not calls_df.empty:
+                                logger.info(f"Dhan API: Fetched {len(puts_df)} puts and {len(calls_df)} calls for {symbol} expiring on {closest_expiration} ({selected_dte} DTE). Current price: ₹{S:.2f}")
+                                return closest_expiration, puts_df, calls_df, S
+            except Exception as e:
+                logger.error(f"Dhan API: Error fetching live option chain for {symbol}: {e}. Falling back to default data fetcher...")
+
+        # Fallback to yfinance option chain or synthetic
+        try:
+            ticker = yf.Ticker(symbol)
+            if S is None or S <= 0:
+                history = ticker.history(period="5d")
+                if not history.empty:
+                    history = history.dropna(subset=['Close'])
+                if history.empty:
+                    logger.error(f"Cannot fetch stock price for {symbol}.")
+                    return None, pd.DataFrame(), pd.DataFrame(), 0.0
+                S = history['Close'].iloc[-1]
             
             expirations = ticker.options
             if not expirations:
                 logger.info(f"No option chains found for {symbol}. Falling back to synthetic option chain.")
                 return self._generate_synthetic_option_chain(symbol, S, target_dte)
                 
-            # Find closest expiration to target DTE
             today = datetime.date.today()
             closest_expiration = None
             min_dte_diff = 9999
@@ -136,24 +298,21 @@ class StockDataFetcher:
             puts = opt_chain.puts.copy()
             calls = opt_chain.calls.copy()
             
-            # Enrich puts with DTE, Current Stock Price, and calculated Delta
             puts['dte'] = selected_dte
             puts['underlying_price'] = S
-            
             T = selected_dte / 365.0
             
             p_deltas = []
             for _, row in puts.iterrows():
                 sigma = row['impliedVolatility']
                 if pd.isna(sigma) or sigma <= 0:
-                    sigma = 0.25  # Fallback default IV
+                    sigma = 0.25
                 delta = self.calculate_option_delta(S, row['strike'], T, sigma, 'put')
                 p_deltas.append(delta)
             puts['delta'] = p_deltas
             puts = puts[(puts['bid'] > 0) & (puts['ask'] > 0)]
             puts['mid'] = (puts['bid'] + puts['ask']) / 2.0
             
-            # Enrich calls with DTE, Current Stock Price, and calculated Delta
             calls['dte'] = selected_dte
             calls['underlying_price'] = S
             
@@ -161,7 +320,7 @@ class StockDataFetcher:
             for _, row in calls.iterrows():
                 sigma = row['impliedVolatility']
                 if pd.isna(sigma) or sigma <= 0:
-                    sigma = 0.25  # Fallback default IV
+                    sigma = 0.25
                 delta = self.calculate_option_delta(S, row['strike'], T, sigma, 'call')
                 c_deltas.append(delta)
             calls['delta'] = c_deltas
@@ -310,3 +469,42 @@ class StockDataFetcher:
             logger.error(f"Failed to fetch dynamic F&O symbols: {e}")
             
         return ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS"]
+
+    def calculate_stock_beta(self, stock_symbol: str, index_symbol: str = "^NSEI") -> float:
+        """
+        Calculate the historical beta of a stock relative to an index (default: ^NSEI - Nifty 50).
+        Uses 1-year daily returns.
+        """
+        try:
+            stock_df = self.fetch_stock_history(stock_symbol, period="1y")
+            index_df = self.fetch_stock_history(index_symbol, period="1y")
+            
+            if stock_df.empty or index_df.empty:
+                return 1.0
+                
+            # Align by date
+            merged = pd.merge(stock_df[['Close']], index_df[['Close']], left_index=True, right_index=True, suffixes=('_stock', '_index'))
+            if len(merged) < 50:
+                return 1.0
+                
+            stock_pct = merged['Close_stock'].pct_change().dropna()
+            index_pct = merged['Close_index'].pct_change().dropna()
+            
+            # Align returns
+            aligned = pd.concat([stock_pct, index_pct], axis=1).dropna()
+            if len(aligned) < 50:
+                return 1.0
+                
+            covariance = np.cov(aligned.iloc[:, 0], aligned.iloc[:, 1])[0][1]
+            market_variance = np.var(aligned.iloc[:, 1])
+            
+            if market_variance == 0:
+                return 1.0
+                
+            beta = covariance / market_variance
+            logger.info(f"Calculated Beta for {stock_symbol} relative to {index_symbol}: {beta:.3f}")
+            return float(beta)
+        except Exception as e:
+            logger.warning(f"Error calculating beta for {stock_symbol}: {e}. Defaulting to 1.0.")
+            return 1.0
+

@@ -157,13 +157,19 @@ class TradingBotEngine:
         self.veto_power = brain_cfg.get('veto_power', True)
         self.crypto_brain = TradingBrain(
             api_key=config['credentials'].get('gemini_api_key', ''),
-            model=brain_cfg.get('model', 'gemini-1.5-flash'),
+            model=brain_cfg.get('model', 'gemini-2.0-flash'),
             veto_power=self.veto_power
         )
         
+        # Initialize Dhan client
+        dhan_client_id = config['credentials'].get('dhan_client_id')
+        dhan_access_token = config['credentials'].get('dhan_access_token')
+        from stocks.dhan_client import DhanClient
+        self.dhan_client = DhanClient(client_id=dhan_client_id, access_token=dhan_access_token)
+        
         # Stocks Options Components
         stocks_cfg = config.get('stocks', {})
-        self.stocks_fetcher = StockDataFetcher()
+        self.stocks_fetcher = StockDataFetcher(dhan_client=self.dhan_client)
         self.stocks_strategy = BullPutSpreadStrategy(
             data_fetcher=self.stocks_fetcher,
             target_dte=stocks_cfg.get('target_dte', 40),
@@ -172,7 +178,7 @@ class TradingBotEngine:
             min_iv_rank=stocks_cfg.get('min_iv_rank', 0.0),
             ema_period=stocks_cfg.get('ema_period', 200)
         )
-        self.stocks_execution = OptionsExecution(paper=True)
+        self.stocks_execution = OptionsExecution(paper=self.is_paper, dhan_client=self.dhan_client)
         self.stocks_risk = OptionsRiskManager(
             max_option_margin_pct=stocks_cfg.get('max_option_margin_pct', 0.50),
             max_capital_per_spread_pct=stocks_cfg.get('max_capital_per_spread_pct', 0.15),
@@ -183,6 +189,14 @@ class TradingBotEngine:
             base_lots=stocks_cfg.get('base_lots', 5),
             sized_down_lots=stocks_cfg.get('sized_down_lots', 1)
         )
+        
+        # Delta Hedging Configuration
+        dh_cfg = stocks_cfg.get('delta_hedging', {})
+        self.dh_enabled = dh_cfg.get('enabled', True)
+        self.dh_threshold = dh_cfg.get('threshold', 100.0)
+        self.dh_index = dh_cfg.get('index_symbol', '^NSEI')
+        self.dh_alert_interval = dh_cfg.get('alert_interval_seconds', 300)
+        self.dh_last_alert_time = 0.0
         
         # Notifier & Telegram Controller
         self.notifier = Notifier(
@@ -366,6 +380,7 @@ class TradingBotEngine:
             if now - last_strategy_tick >= strategy_tick_interval:
                 last_strategy_tick = now
                 self._check_exits()
+                self._check_delta_hedging()
                 if self.trading_active:
                     self._check_entries()
                     
@@ -626,6 +641,44 @@ class TradingBotEngine:
                     self.stocks_balance += real_pnl
                     self.stocks_risk.close_spread(symbol, real_pnl, reason=closed_position['reason'])
                     self.notifier.send_message(f"💰 Options Closed for {symbol}: {closed_position['reason']} | PnL: ₹{real_pnl:.2f} | Balance: ₹{self.stocks_balance:.2f}")
+
+    def _check_delta_hedging(self):
+        """Monitor portfolio beta-weighted delta and trigger Telegram warnings if safety limits are exceeded."""
+        if not self.dh_enabled:
+            return
+            
+        try:
+            greeks = self.stocks_risk.calculate_portfolio_greeks(self.stocks_fetcher, index_symbol=self.dh_index)
+            agg = greeks.get('aggregate', {})
+            beta_delta = agg.get('beta_weighted_delta', 0.0)
+            
+            if abs(beta_delta) >= self.dh_threshold:
+                now = time.time()
+                if now - self.dh_last_alert_time >= self.dh_alert_interval:
+                    self.dh_last_alert_time = now
+                    
+                    action_desc = "Sell/Short" if beta_delta > 0 else "Buy/Long"
+                    opp_desc = "put" if beta_delta > 0 else "call"
+                    
+                    msg = (
+                        f"⚠️ **PORTFOLIO DELTA RISK WARNING** ⚠️\n\n"
+                        f"Your options portfolio's net beta-weighted Delta has exceeded the safety threshold of {self.dh_threshold:.1f}!\n\n"
+                        f"- **Net Beta-Weighted Delta:** {beta_delta:+.2f} (equivalent to {beta_delta:+.1f} shares of {self.dh_index})\n"
+                        f"- **Total Delta:** {agg.get('delta', 0.0):+.2f}\n"
+                        f"- **Total Gamma:** {agg.get('gamma', 0.0):+.4f}\n"
+                        f"- **Total Theta:** {agg.get('theta', 0.0):+.2f}/day\n"
+                        f"- **Total Vega:** {agg.get('vega', 0.0):+.2f}/1% IV change\n\n"
+                        f"👉 **Recommended Hedge:** {action_desc} {abs(beta_delta):.1f} shares equivalent of {self.dh_index} (e.g., trade Index Futures or buy {abs(beta_delta):.1f} Delta equivalent of ATM/OTM {opp_desc} options) to reduce portfolio delta exposure.\n\n"
+                        f"**Position Breakdown:**\n"
+                    )
+                    
+                    for item in greeks.get('details', []):
+                        msg += f"- {item['symbol']} ({item['strategy']}): Delta {item['delta']:+.2f} | Beta-Delta {item['beta_delta']:+.2f} (Beta: {item['beta']:.2f})\n"
+                        
+                    self.notifier.send_message(msg)
+                    logger.warning(f"Delta risk threshold exceeded: net beta-weighted delta={beta_delta:+.2f}. Sent Telegram warning.")
+        except Exception as e:
+            logger.error(f"Error in delta hedging check: {e}")
 
     def _check_entries(self):
         # 1. Check Crypto Entries

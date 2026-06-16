@@ -6,8 +6,9 @@ from db import load_all_stock_spreads
 logger = logging.getLogger(__name__)
 
 class OptionsExecution:
-    def __init__(self, paper: bool = True):
+    def __init__(self, paper: bool = True, dhan_client=None):
         self.paper = paper
+        self.dhan_client = dhan_client
         try:
             self.active_spreads: Dict[str, dict] = load_all_stock_spreads()
         except Exception as e:
@@ -45,18 +46,112 @@ class OptionsExecution:
             logger.warning(f"Strategy already open for {symbol}. Cannot double entry in current configuration.")
             return False
             
+        strat = spread.get('strategy_type', 'BULL_PUT')
+        
         if self.paper:
             entry_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             spread['entry_time'] = entry_time
             spread['current_dte'] = spread['dte']
             self.active_spreads[symbol] = spread
-            strat = spread.get('strategy_type', 'BULL_PUT')
             
             logger.info(f"[PAPER] entered {strat} on {symbol} | Net Credit/Debit: ₹{spread['net_credit']:.2f}")
             return True
         else:
-            logger.error("Live execution for options is currently disabled (only simulated paper trading is supported).")
-            return False
+            if not self.dhan_client:
+                logger.error("Dhan API: Cannot execute live options order because DhanClient is not initialized.")
+                return False
+                
+            expiry = spread['expiration']
+            contracts = spread.get('contracts', 1)
+            lot_size = spread.get('lot_size', 50)
+            quantity = int(contracts * lot_size)
+            
+            # Map strategy to legs
+            legs = []
+            if strat == 'BULL_PUT':
+                legs.append({"type": "PE", "strike": spread['short_strike'], "action": "SELL"})
+                legs.append({"type": "PE", "strike": spread['long_strike'], "action": "BUY"})
+            elif strat == 'BEAR_CALL':
+                legs.append({"type": "CE", "strike": spread['short_strike'], "action": "SELL"})
+                legs.append({"type": "CE", "strike": spread['long_strike'], "action": "BUY"})
+            elif strat in ('MOMENTUM_CALL_BUY', 'ORB_CALL_BUY'):
+                legs.append({"type": "CE", "strike": spread['long_strike'], "action": "BUY"})
+            elif strat in ('MOMENTUM_PUT_BUY', 'ORB_PUT_BUY'):
+                legs.append({"type": "PE", "strike": spread['long_strike'], "action": "BUY"})
+            elif strat == 'CASH_SECURED_PUT':
+                legs.append({"type": "PE", "strike": spread['short_strike'], "action": "SELL"})
+            elif strat == 'COVERED_CALL':
+                legs.append({"type": "CE", "strike": spread['short_strike'], "action": "SELL"})
+            elif strat == 'CALENDAR_SPREAD':
+                legs.append({"type": "CE", "strike": spread['short_strike'], "action": "SELL", "expiry": spread.get('near_expiration', expiry)})
+                legs.append({"type": "CE", "strike": spread['short_strike'], "action": "BUY", "expiry": spread.get('long_expiration', expiry)})
+            elif strat == 'IRON_CONDOR':
+                legs.append({"type": "PE", "strike": spread['short_put_strike'], "action": "SELL"})
+                legs.append({"type": "PE", "strike": spread['long_put_strike'], "action": "BUY"})
+                legs.append({"type": "CE", "strike": spread['short_call_strike'], "action": "SELL"})
+                legs.append({"type": "CE", "strike": spread['long_call_strike'], "action": "BUY"})
+            elif strat == 'IRON_BUTTERFLY':
+                legs.append({"type": "PE", "strike": spread['short_put_strike'], "action": "SELL"})
+                legs.append({"type": "PE", "strike": spread['long_put_strike'], "action": "BUY"})
+                legs.append({"type": "CE", "strike": spread['short_call_strike'], "action": "SELL"})
+                legs.append({"type": "CE", "strike": spread['long_call_strike'], "action": "BUY"})
+                
+            logger.info(f"Dhan API: Resolving security IDs for live {strat} on {symbol}...")
+            
+            leg_orders = []
+            for leg in legs:
+                leg_expiry = leg.get('expiry', expiry)
+                sec_id = self.dhan_client.find_instrument_id(
+                    symbol=symbol,
+                    segment='D',
+                    strike=leg['strike'],
+                    option_type=leg['type'],
+                    expiry_date=leg_expiry
+                )
+                if not sec_id:
+                    logger.error(f"Dhan API: Failed to find instrument ID for leg: {leg} on {symbol}. Aborting order.")
+                    return False
+                leg['security_id'] = sec_id
+                leg_orders.append(leg)
+                
+            logger.info(f"Dhan API: Executing orders for live {strat} on {symbol}...")
+            placed_orders = []
+            try:
+                for leg in leg_orders:
+                    res = self.dhan_client.place_order_fno(
+                        security_id=leg['security_id'],
+                        buy_or_sell=leg['action'],
+                        quantity=quantity
+                    )
+                    if res.get('status') == 'failure':
+                        raise RuntimeError(f"Dhan API order failed: {res.get('remarks') or res.get('message')}")
+                    
+                    order_id = res.get('data', {}).get('orderId')
+                    leg['order_id'] = order_id
+                    placed_orders.append(leg)
+            except Exception as e:
+                logger.error(f"Dhan API: Error placing spread order legs: {e}")
+                logger.warning("Dhan API: Reversing already placed legs to manage risk...")
+                for placed in placed_orders:
+                    try:
+                        reverse_action = 'SELL' if placed['action'] == 'BUY' else 'BUY'
+                        self.dhan_client.place_order_fno(
+                            security_id=placed['security_id'],
+                            buy_or_sell=reverse_action,
+                            quantity=quantity
+                        )
+                    except Exception as rev_err:
+                        logger.error(f"Dhan API: Failed to place risk reversal order for leg {placed}: {rev_err}")
+                return False
+                
+            entry_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            spread['entry_time'] = entry_time
+            spread['current_dte'] = spread['dte']
+            spread['placed_legs'] = placed_orders
+            self.active_spreads[symbol] = spread
+            
+            logger.info(f"Dhan API: Successfully entered live {strat} on {symbol} | Net Credit/Debit: ₹{spread['net_credit']:.2f}")
+            return True
 
     def check_exit_conditions(self, symbol: str, current_underlying_price: float, 
                                current_spread_value: float, profit_target_pct: float = 0.50, 
@@ -208,7 +303,83 @@ class OptionsExecution:
 
     def close_spread(self, symbol: str) -> Optional[dict]:
         """Remove spread from active tracking and return closed position details."""
-        if symbol in self.active_spreads:
+        if symbol not in self.active_spreads:
+            return None
+            
+        spread = self.active_spreads[symbol]
+        strat = spread.get('strategy_type', 'BULL_PUT')
+        
+        if self.paper:
             return self.active_spreads.pop(symbol)
-        return None
+            
+        if not self.dhan_client:
+            logger.error("Dhan API: Cannot close live spread because DhanClient is not initialized.")
+            return self.active_spreads.pop(symbol)
+            
+        logger.info(f"Dhan API: Closing live {strat} on {symbol}...")
+        
+        placed_legs = spread.get('placed_legs')
+        if not placed_legs:
+            # Reconstruct legs
+            legs = []
+            expiry = spread['expiration']
+            if strat == 'BULL_PUT':
+                legs.append({"type": "PE", "strike": spread['short_strike'], "action": "SELL"})
+                legs.append({"type": "PE", "strike": spread['long_strike'], "action": "BUY"})
+            elif strat == 'BEAR_CALL':
+                legs.append({"type": "CE", "strike": spread['short_strike'], "action": "SELL"})
+                legs.append({"type": "CE", "strike": spread['long_strike'], "action": "BUY"})
+            elif strat in ('MOMENTUM_CALL_BUY', 'ORB_CALL_BUY'):
+                legs.append({"type": "CE", "strike": spread['long_strike'], "action": "BUY"})
+            elif strat in ('MOMENTUM_PUT_BUY', 'ORB_PUT_BUY'):
+                legs.append({"type": "PE", "strike": spread['long_strike'], "action": "BUY"})
+            elif strat == 'CASH_SECURED_PUT':
+                legs.append({"type": "PE", "strike": spread['short_strike'], "action": "SELL"})
+            elif strat == 'COVERED_CALL':
+                legs.append({"type": "CE", "strike": spread['short_strike'], "action": "SELL"})
+            elif strat == 'CALENDAR_SPREAD':
+                legs.append({"type": "CE", "strike": spread['short_strike'], "action": "SELL", "expiry": spread.get('near_expiration', expiry)})
+                legs.append({"type": "CE", "strike": spread['short_strike'], "action": "BUY", "expiry": spread.get('long_expiration', expiry)})
+            elif strat == 'IRON_CONDOR':
+                legs.append({"type": "PE", "strike": spread['short_put_strike'], "action": "SELL"})
+                legs.append({"type": "PE", "strike": spread['long_put_strike'], "action": "BUY"})
+                legs.append({"type": "CE", "strike": spread['short_call_strike'], "action": "SELL"})
+                legs.append({"type": "CE", "strike": spread['long_call_strike'], "action": "BUY"})
+            elif strat == 'IRON_BUTTERFLY':
+                legs.append({"type": "PE", "strike": spread['short_put_strike'], "action": "SELL"})
+                legs.append({"type": "PE", "strike": spread['long_put_strike'], "action": "BUY"})
+                legs.append({"type": "CE", "strike": spread['short_call_strike'], "action": "SELL"})
+                legs.append({"type": "CE", "strike": spread['long_call_strike'], "action": "BUY"})
+                
+            placed_legs = []
+            for leg in legs:
+                leg_expiry = leg.get('expiry', expiry)
+                sec_id = self.dhan_client.find_instrument_id(
+                    symbol=symbol,
+                    segment='D',
+                    strike=leg['strike'],
+                    option_type=leg['type'],
+                    expiry_date=leg_expiry
+                )
+                if sec_id:
+                    leg['security_id'] = sec_id
+                    placed_legs.append(leg)
+                    
+        contracts = spread.get('contracts', 1)
+        lot_size = spread.get('lot_size', 50)
+        quantity = int(contracts * lot_size)
+        
+        for leg in placed_legs:
+            if 'security_id' in leg:
+                close_action = 'BUY' if leg['action'] == 'SELL' else 'SELL'
+                try:
+                    self.dhan_client.place_order_fno(
+                        security_id=leg['security_id'],
+                        buy_or_sell=close_action,
+                        quantity=quantity
+                    )
+                except Exception as e:
+                    logger.error(f"Dhan API: Error placing close order for leg {leg}: {e}")
+                    
+        return self.active_spreads.pop(symbol)
 

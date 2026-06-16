@@ -25,7 +25,7 @@ def _is_safe_symbol(symbol: str) -> bool:
     return bool(re.match(r'^[A-Za-z0-9/^._-]+$', symbol))
 
 class TradingBrain:
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash", veto_power: bool = True):
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash", veto_power: bool = True):
         self.api_key = api_key
         self.model = model
         self.veto_power = veto_power
@@ -109,7 +109,16 @@ class TradingBrain:
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "responseMimeType": "application/json"
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "decision": {"type": "STRING", "enum": ["APPROVE", "VETO"]},
+                        "confidence": {"type": "NUMBER"},
+                        "rationale": {"type": "STRING"}
+                    },
+                    "required": ["decision", "confidence", "rationale"]
+                }
             }
         }
         
@@ -323,7 +332,16 @@ class TradingBrain:
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "responseMimeType": "application/json"
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "decision": {"type": "STRING", "enum": ["APPROVE", "VETO"]},
+                        "confidence": {"type": "NUMBER"},
+                        "rationale": {"type": "STRING"}
+                    },
+                    "required": ["decision", "confidence", "rationale"]
+                }
             }
         }
         

@@ -122,4 +122,4 @@ Logs are systematically written to both stdout and the `logs/` directory.
 
 ---
 
-Would you like me to add a specific section for your preferred technical indicators or database integrations to this README?
+

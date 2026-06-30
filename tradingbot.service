@@ -1,0 +1,34 @@
+[Unit]
+Description=Trading Bot Engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Assumes the username on Raspberry Pi is 'pi'. Change if different.
+User=pi
+Group=pi
+
+# Assumes the repo is cloned into /home/pi/TradingBot
+WorkingDirectory=/home/pi/TradingBot
+
+# Path to the virtual environment python
+ExecStart=/home/pi/TradingBot/venv/bin/python main.py
+
+# Restart the service if it crashes
+Restart=always
+RestartSec=10
+
+# Allow 30 seconds for graceful shutdown before killing
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Redirect logs to standard output/error (viewable via journalctl)
+StandardOutput=inherit
+StandardError=inherit
+
+# Useful environment variables
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target

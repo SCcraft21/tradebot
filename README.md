@@ -1,6 +1,6 @@
 <p style="color: blue; font-family: 'Arial', sans-serif; font-size: 20px;">
 
-# TradeBot 🤖📈
+# TradeBot
 
 An advanced, automated cryptocurrency trading bot driven by autonomous agentic workflows. TradeBot leverages LLM-based intelligence to analyze market trends, execute strategic trades, and manage risk with production-grade reliability.
 
